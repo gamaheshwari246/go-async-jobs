@@ -86,7 +86,12 @@ func(s *Server)depth(w http.ResponseWriter,r *http.Request){
 func(s *Server)queueStats()(map[string]any,error){
  total,active,archived,completed:=0,0,0,0
  byQueue:=map[string]any{}
+ existing,err:=s.Inspector.Queues()
+ if err!=nil{return nil,err}
+ present:=make(map[string]bool,len(existing))
+ for _,name:=range existing{present[name]=true}
  for _,q:=range queues{
+ if !present[q]{byQueue[q]=map[string]int{"waiting":0,"active":0,"archived":0,"completed":0};continue}
  info,err:=s.Inspector.GetQueueInfo(q)
  if errors.Is(err,asynq.ErrQueueNotFound){byQueue[q]=map[string]int{"waiting":0,"active":0,"archived":0,"completed":0};continue}
  if err!=nil{return nil,err}
