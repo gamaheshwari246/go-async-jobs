@@ -1,0 +1,32 @@
+name: Go CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Resolve dependencies
+        run: go mod tidy
+      - name: Full unit and Redis integration suite
+        env:
+          REDIS_TEST_ADDR: 127.0.0.1:6379
+        run: go test -mod=mod -race -tags=integration -count=1 ./...
+      - name: Vet
+        run: go vet -mod=mod ./...
+      - name: Build
+        run: go build -mod=mod ./cmd/api ./cmd/worker

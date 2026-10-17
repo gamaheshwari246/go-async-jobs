@@ -1,0 +1,34 @@
+services:
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+  api:
+    build: .
+    command: ["api"]
+    environment:
+      REDIS_ADDR: redis:6379
+      HTTP_ADDR: :8080
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-local-dev-token}"
+    ports:
+      - "8080:8080"
+    depends_on:
+      redis:
+        condition: service_healthy
+  worker:
+    build: .
+    command: ["worker"]
+    environment:
+      REDIS_ADDR: redis:6379
+      WORKER_CONCURRENCY: "5"
+    depends_on:
+      redis:
+        condition: service_healthy
+volumes:
+  redis_data:
