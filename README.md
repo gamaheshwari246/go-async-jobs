@@ -75,6 +75,29 @@ Once Redis acknowledges enqueue and retains its state, Asynq retries failed or i
 
 An optional HTTP `Idempotency-Key` header reduces duplicate **submission** when the client retries a POST; it is **not required** and is separate from worker-level idempotency. Its matching is not a long-lived, globally atomic registry. See [IDEMPOTENCY.md](docs/IDEMPOTENCY.md) for both problems and [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the failure matrix.
 
+## Run 25 deployment verification tests
+
+The executable [25-test deployment runner](scripts/verify_deployment_25.sh) checks the live API: liveness/readiness, asynchronous job results, queue depth, priority routing, defaults, retries/backoff, dead-lettering, timeouts, idempotency, input validation, worker count, and admin drain/resume.
+
+From your laptop (requires `curl`, `jq`, and `awk`):
+
+```bash
+git pull origin main
+BASE_URL=http://146.190.95.143:8080 bash scripts/verify_deployment_25.sh
+```
+
+Tests **1–23** run automatically, creating only small demonstration jobs (including intentionally failing jobs). Tests **24–25** are privileged and **SKIP** unless explicitly enabled. To run those from a machine with SSH key access to the Droplet:
+
+```bash
+BASE_URL=http://146.190.95.143:8080 \
+SSH_HOST=root@146.190.95.143 RUN_PRIVILEGED=1 \
+bash scripts/verify_deployment_25.sh
+```
+
+Test 24 reads the remotely deployed worker/API counts (expects at least 4 workers and one API); it does not change worker scale. Test 25 performs drain/reject/resume **only over SSH to the Droplet's localhost**, automatically attempting resume on failure. It deliberately skips when the Droplet still has the Compose development-default admin token. Do **not** expose admin tokens or an unauthenticated production job submission endpoint to the internet. Restrict public port 8080 to your IP with a DigitalOcean Cloud Firewall or use an SSH tunnel.
+
+CI exercises tests 1–23 against its own disposable Docker Compose stack and reports 24–25 as skipped; it does not target a public Droplet.
+
 ## Tests and CI
 
 ```bash
