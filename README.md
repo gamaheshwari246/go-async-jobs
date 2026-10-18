@@ -1,6 +1,6 @@
 # Go Asynchronous Jobs API
 
-An interview-scale Go REST API with Redis/Asynq workers, priority classes, exponential retries, per-attempt timeouts, archived dead-letter tasks, retained results, status/queue-depth endpoints, and drain/resume controls.
+A Go REST API with independently scalable workers using Redis + Asynq, weighted priority classes, exponential retry/backoff, per-attempt timeout, Redis-backed archived dead-letter tasks, status/results and operational drain/resume.
 
 ## Quick start
 
@@ -9,15 +9,17 @@ docker compose up --build -d --scale worker=2
 curl http://localhost:8080/healthz
 ```
 
-Submit a job:
+Submit a job (the server generates the job ID):
 
 ```bash
-curl -i -X POST http://localhost:8080/jobs -H 'Content-Type: application/json' -d '{"type":"demo.sleep","payload":{"duration_ms":250,"fail_first":0},"priority":9,"max_retries":3,"timeout_seconds":5}'
+curl -i -X POST http://localhost:8080/jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"demo.sleep","payload":{"duration_ms":250,"fail_first":0},"priority":9,"max_retries":3,"timeout_seconds":5}'
 ```
 
-Expect HTTP 202 with a `job_id`. Fetch status and result with `GET /jobs/{id}`. See `GET /queue/depth` for waiting, active, archived, and retained-completed counters.
+The API replies HTTP 202 with `job_id` without waiting for handler execution. Read `GET /jobs/{id}` for state, attempts, last error and result, and `GET /queue/depth` for waiting/active/archived counts.
 
-Pause admission / resume using a bearer token:
+Operational drain (rejects new submissions, lets accepted jobs finish):
 
 ```bash
 curl -X POST http://localhost:8080/admin/drain -H 'Authorization: Bearer local-dev-token'
@@ -25,51 +27,55 @@ curl -X GET http://localhost:8080/admin/drain -H 'Authorization: Bearer local-de
 curl -X POST http://localhost:8080/admin/resume -H 'Authorization: Bearer local-dev-token'
 ```
 
-## Worker configuration
-`REDIS_ADDR` points to Redis; `WORKER_CONCURRENCY` defaults to 5 (1–100). API uses `HTTP_ADDR` (default :8080) and `ADMIN_TOKEN`; absent token disables admin operations. Compose sets a local-development-only token — replace it outside localhost. Worker can scale independently: `docker compose up -d --scale worker=4`.
+## Worker and job configuration
 
-Priority must be 0–9, default 5. 0–3: low; 4–6: default; 7–9: critical. Weights 1:3:6 approximate fairness and **do not guarantee strict global priority ordering**. `max_retries` range 0–10 (default 3). `timeout_seconds` range 1–300 (default 30). Payload limit 16 KiB. Only the `demo.sleep` handler is installed in the demonstration.
+`REDIS_ADDR` (default `127.0.0.1:6379`), `WORKER_CONCURRENCY` (default 5; range 1–100), `HTTP_ADDR` (default `:8080`) and `ADMIN_TOKEN` (required for admin API) configure the two processes. Docker Compose sets a development-only admin token; replace it outside local development. Scale workers using `docker compose up -d --scale worker=4`.
 
-## Tests
+Priority is 0–9, default 5. 0–3 maps to `low` (weight 1), 4–6 to `default` (weight 3), 7–9 to `critical` (weight 6); numeric priorities are **not strictly ordered**. `max_retries` is 0–10 (default 3). `timeout_seconds` is 1–300 (default 30). Payload limit is 16 KiB. The demonstrated handler types are `demo.sleep` and `demo.effect`.
+
+## Full lifecycle
+
+```mermaid
+flowchart TD
+    A[Client POST jobs] --> B[Go API validate + enqueue]
+    B --> C[(Redis: critical/default/low queues)]
+    C --> D[PENDING]
+    D -->|Worker claims| E[ACTIVE]
+    E --> F{Handler outcome}
+    F -->|Success| G[COMPLETED + result]
+    F -->|Error/timeout, retries available| H[RETRY + backoff]
+    H -->|Due| D
+    F -->|Retries exhausted| I[ARCHIVED / dead letter]
+    E -.->|Worker crashes| J[Asynq recovery while Redis state survives]
+    J --> H
+```
+
+**Redis stores tasks and their lifecycle state; Asynq manages transitions.** Queue names describe weighted priority. States describe whether each job is pending, executing, delayed for retry, completed or dead-lettered. `max_retries=N` means an initial attempt plus up to N **ordinary** error retries, not a strict bound on crash recovery or external side effects. Archived jobs remain queryable while their records are retained.
+
+## At-least-once and idempotency
+
+Once Redis acknowledges enqueue and retains its state, Asynq retries failed or interrupted work; **the handler can execute more than once**. Worker 1 could commit a business effect and crash before marking success; Worker 2 can then repeat the job. Stable server-generated job IDs and attempt logs help identify repeats. The `demo.effect` handler demonstrates a Redis-local effect protected by atomic `SETNX`: first attempt stores an effect and deliberately fails; the retry sees the effect and returns successfully without storing it twice. This **does not** guarantee exactly-once external API payments/emails. Those require transactional or downstream-enforced idempotency. Redis AOF `appendfsync everysec` can lose the most recent acknowledged writes in a hard crash.
+
+An optional HTTP `Idempotency-Key` header reduces duplicate **submission** when the client retries a POST; it is **not required** and is separate from worker-level idempotency. Its matching is not a long-lived, globally atomic registry. See [IDEMPOTENCY.md](docs/IDEMPOTENCY.md) for both problems and [ARCHITECTURE.md](docs/ARCHITECTURE.md) for the failure matrix.
+
+## Tests and CI
 
 ```bash
 go mod tidy
 go test -race ./...
-# Start a separate disposable Redis on localhost:6380:
+# Use a disposable Redis instance: integration tests flush DB 14.
 docker run -d --name redis-test -p 6380:6379 redis:7.4-alpine
 REDIS_TEST_ADDR=127.0.0.1:6380 go test -race -tags=integration -count=1 ./...
 go vet ./...
 go build ./cmd/api ./cmd/worker
 ```
 
-**Warning:** integration tests flush Redis database 14; only run against a disposable Redis. GitHub Actions provisions Redis and executes the full suite automatically.
-
-## Architecture
-
-```mermaid
-flowchart TD
-  HTTP[POST /jobs] --> API[Go API]
-  API --> Redis[(Redis Asynq queues)]
-  Redis --> Workers[Go worker pool]
-  Workers --> Handler[Pluggable handler]
-  Handler -->|success| Results[Completed + result]
-  Handler -->|transient failure| Retry[Exponential backoff]
-  Retry --> Redis
-  Handler -->|exhausted| Dead[Archived dead-letter]
-  Results --> Redis
-  Dead --> Redis
-  API --> Status[GET status / depth / admin drain]
-  Status --> Redis
-```
-
-## At-least-once processing
-Successful enqueue provides a durable task only to the extent of Redis persistence/failover guarantees. Asynq redelivers unfinished tasks after recovery, so a worker crash may execute a handler more than once. A crash after external effects but before completion acknowledgment is the classic duplicate window. This project logs job IDs and attempt counts, but does not implement downstream external-side-effect deduplication. See `docs/ARCHITECTURE.md`.
+GitHub Actions (`.github/workflows/ci.yml`) runs the Redis integration suite with race detection, `go vet`, and builds on each push and pull request. Integration tests cover success/results, transient retry, exhaustion/archive, handler panic, timeout, drain/resume and Redis-local idempotency; an actual operating-system worker-kill test has **not** been added.
 
 ## What breaks first under load?
-Redis backlog and retained-result memory grow when arrivals exceed workers' completion throughput; bounded worker concurrency alone doesn't bound waiting jobs. Heavy retries worsen load; worker capacity, queue age, dead-letter rates, Redis memory/persistence latency, and job p95 should be monitored. Admission limits and strict dedupe are recommended hardening. See `docs/QUEUE_OPTIONS.md` and `docs/PLAN.md`.
 
-## Implementation status
-Required endpoints, handler, retry policy, integration test scenarios and CI workflow are included. Not yet verified against a live Redis environment in the authoring runtime. Known gaps: no process-kill test, no cross-process exactly-once guarantee, no strict atomic drain fence, finite result retention.
+Sustained throughput above worker capacity grows Redis waiting queues, archived records and completed-result memory. Bounded worker concurrency does **not** bound queue depth. Repeated retries increase pressure; Redis persistence can become an availability/durability bottleneck. Monitor queue age/depth, throughput, worker utilization, retry/dead-letter rates and Redis memory. Hard backlog admission, stronger durability and longer-lived result storage are production hardening options; they are not present in this interview-scale implementation.
 
-## Idempotency demonstration
-Send `Idempotency-Key: order-123` with POST /jobs. Identical replays return the existing job ID (HTTP 200); changed job config with that key returns 409 while the task is retained. Submit `demo.effect` with `max_retries: 1` to exercise Redis atomic effect deduplication after an injected post-effect failure. See [docs/IDEMPOTENCY.md](docs/IDEMPOTENCY.md). This does not provide exactly-once guarantees for arbitrary external systems.
+## Engineering scope
+
+See [requirements mapping](docs/REQUIREMENTS.md), [full architecture](docs/ARCHITECTURE.md), [idempotency design](docs/IDEMPOTENCY.md) and [alternative queue technologies](docs/QUEUE_OPTIONS.md). Known limitations are documented rather than claimed as solved.
