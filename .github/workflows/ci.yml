@@ -47,3 +47,10 @@ jobs:
         run: go build -mod=readonly ./cmd/api ./cmd/worker ./cmd/healthcheck
       - name: Docker image smoke build
         run: docker build -t go-async-jobs:ci .
+      - name: Compose API and worker readiness smoke test
+        run: |
+          docker compose up --build -d --wait --wait-timeout 90 --scale worker=2
+          curl --fail --silent --show-error http://127.0.0.1:8080/readyz
+      - name: Tear down Compose smoke test
+        if: always()
+        run: docker compose down -v --remove-orphans
