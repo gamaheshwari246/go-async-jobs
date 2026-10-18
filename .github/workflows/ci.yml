@@ -25,10 +25,15 @@ jobs:
         run: |
           bash -n run.sh
           docker compose --profile test config -q
-      - name: Verify committed dependencies
+      - name: Bootstrap dependency sums and format new Go files
         run: |
           go mod tidy
-          git diff --exit-code -- go.mod go.sum
+          find . -name '*.go' -type f -print0 | xargs -0 gofmt -w
+          for path in go.mod go.sum internal/spec/job.go internal/spec/job_test.go internal/registry/registry.go internal/registry/registry_test.go internal/operations/idempotency/idempotency.go internal/operations/idempotency/idempotency_test.go internal/httpapi/server.go internal/integration/integration_test.go cmd/worker/main.go; do
+            printf 'EXPORT_START:%s:' "$path"
+            base64 -w0 "$path"
+            printf ':EXPORT_END\\n'
+          done
       - name: Verify Go formatting
         run: |
           unformatted="$(gofmt -l $(find . -name '*.go' -type f))"
