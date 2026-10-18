@@ -29,3 +29,7 @@ The GitHub Actions suite previously passed all unit and Redis integration tests 
 ## Hardening update
 
 Payload types are registered centrally with dedicated validators and worker handlers in `internal/registry`. Redis queue-independent reservation and a cross-priority key test were added. Redis memory is bounded with `noeviction`, workers drain gracefully on ordinary stops, and the build pins dependency sums. A separate [future production architecture](FUTURE_PRODUCTION.md) sketches RabbitMQ + PostgreSQL without claiming it has been implemented.
+
+## Submission reservation recovery
+
+Optional HTTP idempotency now uses an atomic Redis fingerprint reservation with a five-second claim lease. A client retry recovers an orphaned pre-enqueue claim after lease expiry. If enqueue succeeded but confirmation was interrupted, Asynq inspection repairs the reservation. Integration tests cover both crash windows and cross-priority rejection. No new broker or database is required; this does not provide unconditional exactly-once semantics or automatic recovery without client retries.

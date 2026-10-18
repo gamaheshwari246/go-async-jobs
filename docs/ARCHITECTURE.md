@@ -51,7 +51,7 @@ The server-generated Asynq job ID is stable across worker attempts. Log the ID a
 
 This is a **Redis-local demonstration only**, not an exactly-once external payment/email guarantee. For a downstream API, use provider-enforced idempotency with a stable business key; for our own transactional database, atomically commit the deduplication record and business change together. Redis `SETNX` before an unrelated external call can incorrectly suppress an effect if a crash happens between the two.
 
-**Optional HTTP submission deduplication:** `Idempotency-Key` is implemented but not required by the assignment. It deals with client re-submission and is independent of worker retries. A Redis Lua reservation now serializes the same idempotency key across priority queues, but expires after 48 hours and is **not atomic with enqueue**; orphaned reservations can temporarily block replays. Details in [IDEMPOTENCY.md](IDEMPOTENCY.md).
+**Optional HTTP submission deduplication:** `Idempotency-Key` is implemented but not required by the assignment. It deals with client re-submission and is independent of worker retries. A Redis Lua reservation now serializes the same idempotency key across priority queues. Its five-second claim lease permits client-driven recovery of a crashed API before enqueue; if Asynq already accepted the job, a retry inspects and repairs the reservation. The reservation lasts 48 hours. No background sweeper is implemented; the client must retry, and Redis durability/retention still constrain guarantees. Details in [IDEMPOTENCY.md](IDEMPOTENCY.md).
 
 ## Failure scenarios and tests
 
@@ -79,3 +79,22 @@ No permanent audit log, no exhaustive failure-injection matrix, no strict atomic
 ## Operational improvements and remaining gaps
 
 Worker shutdown now allows up to 330 seconds before Asynq cancels inflight jobs; Compose gives workers 350 seconds for graceful stop. Redis uses 256mb `maxmemory` with `noeviction`, which avoids silent queue-item eviction but causes write failures at capacity. The optional HTTP idempotency key uses a queue-independent Redis reservation with a 48-hour expiry; reservation and enqueue are not one transaction, so an interrupted request may produce a temporary orphan reservation. See [FUTURE_PRODUCTION.md](FUTURE_PRODUCTION.md) for the prospective RabbitMQ/PostgreSQL design.
+
+## HTTP submission recovery (optional Idempotency-Key)
+
+```mermaid
+flowchart TD
+  A[Reserve fingerprint and 5-second lease in Redis] --> B{API process alive?}
+  B -->|Yes| C[Asynq enqueue with stable task ID]
+  C --> D[Confirm committed]
+  B -->|Crash before enqueue| E[Same-key client retry]
+  E -->|Lease active| F[503 Retry-After 1]
+  F --> E
+  E -->|Lease expired| C
+  C -->|API crash before confirm| G[Same-key client retry]
+  G --> H[Inspect Asynq for existing task]
+  H -->|Exists| I[Repair confirmation and return original ID]
+  H -->|Not yet present| E
+```
+
+This fixes the former 48-hour temporary orphan-reservation blocking behavior for a retrying client, **without** introducing RabbitMQ. The short claim lease allows recovery after an API crash before enqueue, and inspector-based reconciliation handles an enqueue that succeeded before confirmation. This does not remove Redis persistence limitations, finite task retention or the need for a client retry. See [IDEMPOTENCY.md](IDEMPOTENCY.md).

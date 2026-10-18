@@ -28,7 +28,7 @@ Two identical `POST /jobs` calls **without** a shared key might be two intention
 - First request: enqueue with an Asynq task ID derived from SHA-256 of the header; return HTTP 202.
 - Replayed matching request while the existing task is available: return the same task ID with HTTP 200.
 - Same key but conflicting request configuration, when the existing task is detected: return HTTP 409.
-- The queue-independent Redis reservation rejects cross-priority-key reuse while it remains valid; it expires after 48 hours and is not a permanent business transaction ledger.
+- A queue-independent Redis reservation rejects cross-priority-key reuse while retained (48 hours). A five-second claim lease allows the same request to recover after an API process crash.
 
 The header is **not** used by Asynq when it retries a worker job; worker attempts already share the Asynq task ID. HTTP request deduplication is an additional convenience feature, not something explicitly requested in the assignment.
 
@@ -38,10 +38,44 @@ The header is **not** used by Asynq when it retries a worker job; worker attempt
 |---|---|---|---|
 | Detect worker re-execution | Server-generated task ID | Asynq retry metadata + logging | Does not prevent re-execution |
 | Demonstrate idempotent effect | Server-generated task ID | Redis `SETNX` for demo-local effect | Cannot protect unrelated APIs |
-| Deduplicate client HTTP retries | Optional `Idempotency-Key` header | Deterministic task ID while retained | Limited scope/retention; not global guarantee |
+| Deduplicate client HTTP retries | Optional `Idempotency-Key` header | Deterministic task ID + recoverable Redis lease | 48-hour scope; Redis durability and external effects remain separate |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full lifecycle, recovery and failure matrix.
 
-## Queue-independent reservation implementation
+## Queue-independent reservation with crash recovery
 
-A Redis Lua script atomically reserves the SHA-256 hash of the optional HTTP key with a fingerprint of the validated job body across **all** priority queues. A conflicting priority or payload receives HTTP 409 rather than enqueueing again. The reservation lasts 48 hours. This avoids concurrent cross-queue re-use but is not atomic with enqueue: a process crash after reservation and before successful enqueue can leave the key reserved without a job (replays may return HTTP 409 (job unavailable) until reservation expiry). A production migration needs a durable request ledger or atomic outbox.
+The optional HTTP key identifies one logical submission. The API computes a deterministic Asynq task ID and reserves a Redis hash with the validated job fingerprint. A Lua script atomically coordinates this across **all priority queues**. The working handler still receives its server-generated/stable Asynq ID, not the HTTP idempotency header.
+
+```mermaid
+flowchart TD
+ A[POST with optional Idempotency-Key] --> B{Redis reservation}
+ B -->|New or expired 5s claim| C[Enqueue with deterministic task ID]
+ B -->|Same job, another request working| D[Inspect Asynq]
+ B -->|Conflicting payload or priority| E[409 Conflict]
+ B -->|Already confirmed| D
+ C -->|Accepted| F[Mark reservation committed]
+ C -->|Task ID already exists| D
+ D -->|Matching task exists| G[Repair reservation and return original job ID 200]
+ D -->|In-progress claim, no job yet| H[503 + Retry-After: 1]
+ D -->|Committed record, task expired| I[410 Gone]
+ F --> J[Return 202 with job ID]
+```
+
+### Failure-window behavior
+
+| API failure window | Next client retry |
+|---|---|
+| Crash before reservation | Creates a fresh claim and enqueues |
+| Crash **after reservation, before enqueue** | Gets HTTP 503 while the five-second lease is live; afterwards it reclaims the same reservation and enqueues the same deterministic task ID |
+| Crash **after enqueue, before confirmation** | Inspects Asynq, finds the matching task, repairs the reservation, returns HTTP 200 without enqueueing twice |
+| Crash after confirmation | Returns the existing job ID while Asynq retains the task |
+| Same key, different priority/payload | HTTP 409 throughout the reservation's lifetime |
+| Job state expired but reservation is still committed | HTTP 410; do **not** replay a potentially completed business operation |
+
+For same-key concurrent retries, the first claimant owns a short lease. Other callers either see the task already enqueued or receive a **retryable 503**, never a misleading permanent 409 for an unfinished same-body reservation. An expired claim can be taken over; all identical requests enqueue the **same task ID in the same queue**, so overlapping lease owners cannot create separate Asynq tasks while its task identity remains retained. The idempotency reservation TTL remains **48 hours**, separate from the **five-second lease**.
+
+Tests exercise both simulated crash windows and cross-priority conflict in `internal/integration/integration_test.go`, plus the worker SIGKILL/recovery test. The original string-format Redis reservations are converted to the new hash format on the next matching request.
+
+### Remaining boundaries
+
+This is crash **reconciliation**, not a transaction spanning Redis reservation and Asynq's enqueue. It assumes Redis remains available and retains the task/claim. An API crash still requires the **client to retry**; no separate background sweeper publishes abandoned jobs. Expired records or Redis data loss can permit later re-submission. Arbitrary external payments/emails still require downstream business idempotency, and an interrupted client without an idempotency key remains ambiguous.
