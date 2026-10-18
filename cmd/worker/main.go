@@ -9,7 +9,7 @@ import (
 
 	"example.com/go-async-jobs/internal/backoff"
 	"example.com/go-async-jobs/internal/observability"
- "example.com/go-async-jobs/internal/registry"
+	"example.com/go-async-jobs/internal/registry"
 
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
@@ -41,8 +41,8 @@ func main() {
 			"default":  3,
 			"low":      1,
 		},
-		StrictPriority: false,
-  ShutdownTimeout: 330*time.Second,
+		StrictPriority:  false,
+		ShutdownTimeout: 330 * time.Second,
 		RetryDelayFunc: func(retry int, err error, task *asynq.Task) time.Duration {
 			delay := backoff.Delay(retry, rand.Float64())
 			logger.Warn("job_retry_scheduled",

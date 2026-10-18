@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"example.com/go-async-jobs/internal/operations"
- "example.com/go-async-jobs/internal/registry"
- "example.com/go-async-jobs/internal/operations/idempotency"
+	"example.com/go-async-jobs/internal/operations/idempotency"
+	"example.com/go-async-jobs/internal/registry"
 	"example.com/go-async-jobs/internal/spec"
 
 	"github.com/hibiken/asynq"
@@ -103,9 +103,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := registry.Validate(registry.Definitions(nil), req.Type, req.Payload); err != nil {
-   http.Error(w,err.Error(),http.StatusBadRequest)
-   return
-  }
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	task := asynq.NewTask(job.Type, job.Body)
 	opts := []asynq.Option{
 		asynq.Queue(job.Queue),
@@ -133,23 +133,22 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		opts = append(opts, asynq.TaskID(deterministicID))
 	}
 
-
- if key != "" {
-  decision, reserveErr := idempotency.Reserve(r.Context(),s.Gate.Redis,key,job.Body)
-  if reserveErr != nil {
-   s.logger().ErrorContext(r.Context(),"idempotency_reservation_failed","error",reserveErr)
-   http.Error(w,"idempotency registry unavailable",http.StatusServiceUnavailable)
-   return
-  }
-  if decision == idempotency.Conflict {
-   http.Error(w,"idempotency key reused for different job configuration",http.StatusConflict)
-   return
-  }
-  if decision == idempotency.Existing {
-   s.handleDuplicateSubmission(w,r,deterministicID,job)
-   return
-  }
- }
+	if key != "" {
+		decision, reserveErr := idempotency.Reserve(r.Context(), s.Gate.Redis, key, job.Body)
+		if reserveErr != nil {
+			s.logger().ErrorContext(r.Context(), "idempotency_reservation_failed", "error", reserveErr)
+			http.Error(w, "idempotency registry unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if decision == idempotency.Conflict {
+			http.Error(w, "idempotency key reused for different job configuration", http.StatusConflict)
+			return
+		}
+		if decision == idempotency.Existing {
+			s.handleDuplicateSubmission(w, r, deterministicID, job)
+			return
+		}
+	}
 	info, err := s.Client.EnqueueContext(r.Context(), task, opts...)
 	if key != "" && errors.Is(err, asynq.ErrTaskIDConflict) {
 		s.handleDuplicateSubmission(w, r, deterministicID, job)

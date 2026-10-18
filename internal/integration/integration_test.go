@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"example.com/go-async-jobs/internal/httpapi"
 	"example.com/go-async-jobs/internal/operations"
- "example.com/go-async-jobs/internal/registry"
+	"example.com/go-async-jobs/internal/registry"
 	"fmt"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
@@ -103,7 +103,7 @@ func TestFullLifecycle(t *testing.T) {
 		TaskCheckInterval: 100 * time.Millisecond, DelayedTaskCheckInterval: 100 * time.Millisecond,
 	})
 	mux := asynq.NewServeMux()
-	registry.Register(mux,registry.Definitions(rdb))
+	registry.Register(mux, registry.Definitions(rdb))
 	mux.HandleFunc("test.panic", func(context.Context, *asynq.Task) error { panic("simulated handler crash") })
 	if err := srv.Start(mux); err != nil {
 		t.Fatal(err)
@@ -215,22 +215,30 @@ func TestFullLifecycle(t *testing.T) {
 		}
 	})
 
- t.Run("cross-queue idempotency",func(t *testing.T){
-  key:="priority-cross-queue-001"
-  submitKey:=func(priority int)(int,map[string]any){
-   raw:=fmt.Sprintf(`{"type":"demo.sleep","priority":%d,"payload":{}}`,priority)
-   req,err:=http.NewRequest("POST",httpServer.URL+"/jobs",bytes.NewBufferString(raw));if err!=nil{t.Fatal(err)}
-   req.Header.Set("Idempotency-Key",key)
-   res,err:=http.DefaultClient.Do(req);if err!=nil{t.Fatal(err)}
-   defer res.Body.Close()
-   var got map[string]any
-   _=json.NewDecoder(res.Body).Decode(&got)
-   return res.StatusCode,got
-  }
-  first,one:=submitKey(2)
-  second,_:=submitKey(9)
-  if first!=202||second!=409{t.Fatalf("same idempotency key different queues: %d %v, second %d",first,one,second)}
- })
+	t.Run("cross-queue idempotency", func(t *testing.T) {
+		key := "priority-cross-queue-001"
+		submitKey := func(priority int) (int, map[string]any) {
+			raw := fmt.Sprintf(`{"type":"demo.sleep","priority":%d,"payload":{}}`, priority)
+			req, err := http.NewRequest("POST", httpServer.URL+"/jobs", bytes.NewBufferString(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Idempotency-Key", key)
+			res, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer res.Body.Close()
+			var got map[string]any
+			_ = json.NewDecoder(res.Body).Decode(&got)
+			return res.StatusCode, got
+		}
+		first, one := submitKey(2)
+		second, _ := submitKey(9)
+		if first != 202 || second != 409 {
+			t.Fatalf("same idempotency key different queues: %d %v, second %d", first, one, second)
+		}
+	})
 	t.Run("invalid priority", func(t *testing.T) {
 		code, _ := api("POST", "/jobs", `{"type":"demo.sleep","priority":100,"payload":{}}`, false)
 		if code != http.StatusBadRequest {

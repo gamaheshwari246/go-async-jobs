@@ -89,7 +89,9 @@ func Validate(req SubmitRequest) (Validated, error) {
 	if secs < 1 || secs > 300 {
 		return out, fmt.Errorf("timeout_seconds must be between 1 and 300")
 	}
-	if req.Type == "" { return out, fmt.Errorf("type is required") }
+	if req.Type == "" {
+		return out, fmt.Errorf("type is required")
+	}
 	trimmed := bytes.TrimSpace(req.Payload)
 	if len(trimmed) < 2 || trimmed[0] != '{' || !json.Valid(trimmed) {
 		return out, fmt.Errorf("payload must be a valid JSON object")
