@@ -106,3 +106,4 @@ func workerConfig(concurrency int, logger *slog.Logger, healthCheck func(error))
 			return delay
 		},
 	}
+}
