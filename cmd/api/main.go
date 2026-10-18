@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"example.com/go-async-jobs/internal/httpapi"
+	"example.com/go-async-jobs/internal/metrics"
 	"example.com/go-async-jobs/internal/operations"
 
 	"github.com/hibiken/asynq"
@@ -42,6 +43,7 @@ func main() {
 		Handler: (&httpapi.Server{
 			Client: client, Inspector: inspector, Logger: logger,
 			Gate: operations.Gate{Redis: redisClient}, AdminToken: os.Getenv("ADMIN_TOKEN"),
+			Metrics: &metrics.Collector{Redis:redisClient,Inspector:inspector,Logger:logger},
 		}).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"os/signal"
+	"syscall"
 	"errors"
 	"log/slog"
 	"math/rand"
@@ -13,6 +15,7 @@ import (
 
 	"example.com/go-async-jobs/internal/backoff"
 	"example.com/go-async-jobs/internal/health"
+	"example.com/go-async-jobs/internal/metrics"
 	"example.com/go-async-jobs/internal/observability"
 	"example.com/go-async-jobs/internal/registry"
 
@@ -40,7 +43,7 @@ func main() {
 	}
 
 	readiness := &health.WorkerReadiness{}
-	server := asynq.NewServer(asynq.RedisClientOpt{Addr: addr}, workerConfig(concurrency, logger, readiness.Observe))
+	
 
 	listen, err := net.Listen("tcp", workerHealthAddress())
 	if err != nil {
@@ -61,10 +64,18 @@ func main() {
 
 	redisClient := redis.NewClient(&redis.Options{Addr: addr})
 	defer redisClient.Close()
+	collector := &metrics.Collector{Redis: redisClient, Logger: logger}
+	workerCtx, stopWorker := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stopWorker()
+	collector.Heartbeat(workerCtx, concurrency)
+	config := workerConfig(concurrency, logger, readiness.Observe)
+	config.ErrorHandler = collector.ErrorHandler()
+	server := asynq.NewServer(asynq.RedisClientOpt{Addr: addr}, config)
 
 	mux := asynq.NewServeMux()
 	registry.Register(mux, registry.Definitions(redisClient))
 	mux.Use(observability.TaskMiddleware(logger))
+	mux.Use(collector.Middleware())
 
 	logger.Info("worker_starting", "redis_addr", addr, "concurrency", concurrency,
 		"queue_weights", "critical:6 default:3 low:1", "health_addr", listen.Addr().String())
