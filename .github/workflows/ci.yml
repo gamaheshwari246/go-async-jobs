@@ -42,6 +42,8 @@ jobs:
           REDIS_TEST_ADDR: 127.0.0.1:6379
         run: go test -mod=readonly -race -tags=integration -count=1 ./...
       - name: Vet
-        run: go vet -mod=mod ./...
+        run: go vet -mod=readonly ./...
       - name: Build
-        run: go build -mod=mod ./cmd/api ./cmd/worker
+        run: go build -mod=readonly ./cmd/api ./cmd/worker
+      - name: Docker image smoke build
+        run: docker build -t go-async-jobs:ci .
