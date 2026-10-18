@@ -44,7 +44,7 @@ func TestStateNamesAndAttemptCounts(t *testing.T) {
 		{asynq.TaskStateRetry, 1, "failed", 1},
 		{asynq.TaskStateCompleted, 2, "succeeded", 3},
 		{asynq.TaskStateArchived, 1, "dead_lettered", 2},
-		{asynq.TaskStateScheduled, 0, "queued", 0},
+		{asynq.TaskStateScheduled, 0, "scheduled", 0},
 	}
 	for _, tc := range cases {
 		info := &asynq.TaskInfo{State: tc.state, Retried: tc.retried}

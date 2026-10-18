@@ -25,6 +25,7 @@ type SubmitRequest struct {
 	Priority       *int            `json:"priority,omitempty"`
 	MaxRetries     *int            `json:"max_retries,omitempty"`
 	TimeoutSeconds *int            `json:"timeout_seconds,omitempty"`
+	RunAt          *string         `json:"run_at,omitempty"`
 }
 type Job struct {
 	Priority    int             `json:"priority"`
@@ -37,6 +38,7 @@ type Validated struct {
 	Priority int
 	Retries  int
 	Timeout  time.Duration
+	RunAt    *time.Time
 	Body     []byte
 }
 
@@ -89,6 +91,15 @@ func Validate(req SubmitRequest) (Validated, error) {
 	if secs < 1 || secs > 300 {
 		return out, fmt.Errorf("timeout_seconds must be between 1 and 300")
 	}
+	var runAt *time.Time
+	if req.RunAt != nil {
+		parsed, err := time.Parse(time.RFC3339Nano, *req.RunAt)
+		if err != nil { return out, fmt.Errorf("run_at must be RFC3339 with a timezone: %w", err) }
+		now := time.Now()
+		if !parsed.After(now) { return out, fmt.Errorf("run_at must be in the future") }
+		if parsed.After(now.Add(30 * 24 * time.Hour)) { return out, fmt.Errorf("run_at cannot exceed 30 days") }
+		runAt = &parsed
+	}
 	if req.Type == "" {
 		return out, fmt.Errorf("type is required")
 	}
@@ -104,12 +115,13 @@ func Validate(req SubmitRequest) (Validated, error) {
 		Priority       int
 		Retries        int
 		TimeoutSeconds int
+		RunAt string
 		Payload        json.RawMessage
-	}{req.Type, p, retries, secs, trimmed})
+	}{req.Type, p, retries, secs, func() string { if runAt != nil { return runAt.UTC().Format(time.RFC3339Nano) }; return "" }(), trimmed})
 	sum := sha256.Sum256(fingerprintData)
 	body, err := json.Marshal(Job{Priority: p, Fingerprint: hex.EncodeToString(sum[:]), Payload: trimmed})
 	if err != nil {
 		return out, fmt.Errorf("encode job: %w", err)
 	}
-	return Validated{Type: req.Type, Queue: queue, Priority: p, Retries: retries, Timeout: time.Duration(secs) * time.Second, Body: body}, nil
+	return Validated{Type: req.Type, Queue: queue, Priority: p, Retries: retries, Timeout: time.Duration(secs) * time.Second, RunAt: runAt, Body: body}, nil
 }

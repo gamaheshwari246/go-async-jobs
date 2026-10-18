@@ -2,6 +2,7 @@ package spec
 
 import (
 	"strings"
+	"time"
 	"testing"
 )
 
@@ -58,4 +59,20 @@ func TestDecodeStrictJSON(t *testing.T) {
 	if _, err := Decode(strings.NewReader(`{"type":"demo.sleep","payload":{},"unknown":1}`)); err == nil {
 		t.Fatal("accepted unknown field")
 	}
+}
+
+func TestDelayedRunAt(t *testing.T) {
+	future := time.Now().Add(3*time.Minute).UTC().Format(time.RFC3339Nano)
+	valid, err := Validate(SubmitRequest{Type: "demo.sleep", Payload: []byte("{}"), RunAt: &future})
+	if err != nil || valid.RunAt == nil || !valid.RunAt.Equal(timeNowParse(t, future)) { t.Fatalf("valid run_at: %+v, %v", valid, err) }
+	bad := []string{"invalid", "2020-01-01T00:00:00Z", time.Now().Add(31*24*time.Hour).UTC().Format(time.RFC3339Nano)}
+	for _, value := range bad {
+		if _, err := Validate(SubmitRequest{Type:"demo.sleep",Payload:[]byte("{}"),RunAt:&value}); err == nil { t.Fatalf("accepted invalid run_at %s", value) }
+	}
+}
+func timeNowParse(t *testing.T, s string) time.Time {
+	t.Helper()
+	tm,err:=time.Parse(time.RFC3339Nano,s)
+	if err!=nil {t.Fatal(err)}
+	return tm
 }

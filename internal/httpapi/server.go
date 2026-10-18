@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"example.com/go-async-jobs/internal/metrics"
 	"example.com/go-async-jobs/internal/operations"
 	"example.com/go-async-jobs/internal/operations/idempotency"
 	"example.com/go-async-jobs/internal/registry"
@@ -28,6 +29,7 @@ type Server struct {
 	Logger     *slog.Logger
 	Gate       operations.Gate
 	AdminToken string
+	Metrics *metrics.Collector
 }
 
 func (s *Server) logger() *slog.Logger {
@@ -55,6 +57,11 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /jobs", s.submit)
 	mux.HandleFunc("GET /jobs/{id}", s.status)
 	mux.HandleFunc("GET /queue/depth", s.depth)
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		if !s.adminAuthorized(w,r) { return }
+		if s.Metrics == nil { http.Error(w,"metrics unavailable",http.StatusServiceUnavailable); return }
+		s.Metrics.ServeHTTP(w,r)
+	})
 	mux.HandleFunc("POST /admin/drain", s.adminDrain)
 	mux.HandleFunc("POST /admin/resume", s.adminResume)
 	mux.HandleFunc("GET /admin/drain", s.adminDrainStatus)
@@ -124,6 +131,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		asynq.Timeout(job.Timeout),
 		asynq.Retention(24 * time.Hour),
 	}
+	if job.RunAt != nil { opts = append(opts, asynq.ProcessAt(*job.RunAt)) }
 
 	// Client-supplied idempotency protects HTTP re-submissions, not worker retries.
 	// The short Redis lease is recoverable after an API crash before enqueue.
@@ -218,10 +226,11 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		"priority", job.Priority, "max_retries", job.Retries,
 		"timeout", job.Timeout.String())
 	w.Header().Set("Location", "/jobs/"+info.ID)
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"job_id": info.ID, "status": "queued", "queue": info.Queue,
-		"priority": job.Priority, "status_url": "/jobs/" + info.ID,
-	})
+	status := "queued"
+	response := map[string]any{"job_id": info.ID, "status": status, "queue": info.Queue,
+		"priority": job.Priority, "status_url": "/jobs/" + info.ID}
+	if job.RunAt != nil { response["status"]="scheduled"; response["run_at"]=job.RunAt }
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 // lookupExistingTask inspects Asynq using the stable task ID. A matching
@@ -273,6 +282,8 @@ func stateName(info *asynq.TaskInfo) string {
 		return "failed"
 	case asynq.TaskStateArchived:
 		return "dead_lettered"
+	case asynq.TaskStateScheduled:
+		return "scheduled"
 	default:
 		return "queued"
 	}
