@@ -72,6 +72,24 @@ go build ./cmd/api ./cmd/worker
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the Redis integration suite with race detection, `go vet`, and builds on each push and pull request. Integration tests cover success/results, transient retry, exhaustion/archive, handler panic, timeout, drain/resume and Redis-local idempotency; a separate integration test kills a real worker subprocess with SIGKILL after recording a Redis effect, starts a fresh worker, and asserts recovery, completion and one effect (while Redis state survives).
 
+
+## Structured logs
+
+Both processes write one JSON object per event to standard output using Go's `log/slog`:
+
+- **API:** `http_server_starting`, `http_request_finished` (method/path/status/latency), `job_enqueued` (job ID, queue, priority, retry limit, timeout), `submission_deduplicated`, `job_enqueue_failed`, `admission_draining`, `admission_resumed`, and shutdown events.
+- **Worker:** `worker_starting`, `job_started`, `job_succeeded`, `job_failed`, `job_retry_scheduled`, `job_cancelled`, `effect_committed`, `duplicate_effect_suppressed`, and shutdown events.
+
+Worker events include job ID, queue, task type, attempt and elapsed milliseconds wherever available. HTTP request logs include status and latency. **Task payloads and authorization headers are not intentionally logged.** Errors can nevertheless contain sensitive downstream details and should be sanitized in real business handlers.
+
+Inspect logs with:
+
+```bash
+docker compose logs -f api worker
+```
+
+The Go source is formatted with `gofmt`. CI checks formatting before running the race-enabled full suite.
+
 ## What breaks first under load?
 
 Sustained throughput above worker capacity grows Redis waiting queues, archived records and completed-result memory. Bounded worker concurrency does **not** bound queue depth. Repeated retries increase pressure; Redis persistence can become an availability/durability bottleneck. Monitor queue age/depth, throughput, worker utilization, retry/dead-letter rates and Redis memory. Hard backlog admission, stronger durability and longer-lived result storage are production hardening options; they are not present in this interview-scale implementation.

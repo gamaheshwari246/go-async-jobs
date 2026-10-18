@@ -22,6 +22,14 @@ jobs:
           go-version: '1.23'
       - name: Resolve dependencies
         run: go mod tidy
+      - name: Verify Go formatting
+        run: |
+          unformatted="$(gofmt -l $(find . -name '*.go' -type f))"
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted Go files:"
+            echo "$unformatted"
+            exit 1
+          fi
       - name: Full unit and Redis integration suite
         env:
           REDIS_TEST_ADDR: 127.0.0.1:6379
