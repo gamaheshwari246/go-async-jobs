@@ -70,3 +70,6 @@ Redis backlog and retained-result memory grow when arrivals exceed workers' comp
 
 ## Implementation status
 Required endpoints, handler, retry policy, integration test scenarios and CI workflow are included. Not yet verified against a live Redis environment in the authoring runtime. Known gaps: no process-kill test, no cross-process exactly-once guarantee, no strict atomic drain fence, finite result retention.
+
+## Idempotency demonstration
+Send `Idempotency-Key: order-123` with POST /jobs. Identical replays return the existing job ID (HTTP 200); changed job config with that key returns 409 while the task is retained. Submit `demo.effect` with `max_retries: 1` to exercise Redis atomic effect deduplication after an injected post-effect failure. See [docs/IDEMPOTENCY.md](docs/IDEMPOTENCY.md). This does not provide exactly-once guarantees for arbitrary external systems.

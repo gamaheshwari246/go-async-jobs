@@ -2,6 +2,8 @@ package spec
 
 import (
  "bytes"
+ "crypto/sha256"
+ "encoding/hex"
  "encoding/json"
  "fmt"
  "io"
@@ -25,6 +27,7 @@ type SubmitRequest struct {
 }
 type Job struct {
  Priority int `json:"priority"`
+ Fingerprint string `json:"fingerprint,omitempty"`
  Payload json.RawMessage `json:"payload"`
 }
 type Validated struct{
@@ -57,7 +60,7 @@ func Validate(req SubmitRequest)(Validated,error){
  if retries<0||retries>10{return out,fmt.Errorf("max_retries must be between 0 and 10")}
  secs:=DefaultTimeoutSeconds;if req.TimeoutSeconds!=nil{secs=*req.TimeoutSeconds}
  if secs<1||secs>300{return out,fmt.Errorf("timeout_seconds must be between 1 and 300")}
- if strings.TrimSpace(req.Type)!="demo.sleep"{return out,fmt.Errorf("type must be demo.sleep (only demo handler is installed)")}
+ if req.Type!="demo.sleep" && req.Type!="demo.effect"{return out,fmt.Errorf("type must be demo.sleep or demo.effect")}
  trimmed:=bytes.TrimSpace(req.Payload)
  if len(trimmed)<2||trimmed[0]!='{'||!json.Valid(trimmed){return out,fmt.Errorf("payload must be a valid JSON object")}
  if len(trimmed)>MaxPayloadBytes{return out,fmt.Errorf("payload exceeds %d bytes",MaxPayloadBytes)}
@@ -66,6 +69,14 @@ func Validate(req SubmitRequest)(Validated,error){
  if err:=dec.Decode(&demo);err!=nil{return out,fmt.Errorf("invalid demo payload: %w",err)}
  if demo.DurationMS<0||demo.DurationMS>300000{return out,fmt.Errorf("duration_ms must be 0..300000")}
  if demo.FailFirst<0||demo.FailFirst>10{return out,fmt.Errorf("fail_first must be 0..10")}
- body,err:=json.Marshal(Job{Priority:p,Payload:trimmed});if err!=nil{return out,fmt.Errorf("encode job: %w",err)}
+ fingerprintData,_:=json.Marshal(struct{
+ Type string
+ Priority int
+ Retries int
+ TimeoutSeconds int
+ Payload json.RawMessage
+ }{req.Type,p,retries,secs,trimmed})
+ sum:=sha256.Sum256(fingerprintData)
+ body,err:=json.Marshal(Job{Priority:p,Fingerprint:hex.EncodeToString(sum[:]),Payload:trimmed});if err!=nil{return out,fmt.Errorf("encode job: %w",err)}
  return Validated{Type:req.Type,Queue:queue,Priority:p,Retries:retries,Timeout:time.Duration(secs)*time.Second,Body:body},nil
 }

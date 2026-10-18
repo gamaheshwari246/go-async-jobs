@@ -1,0 +1,3 @@
+# Idempotency demonstration
+
+`Idempotency-Key` creates a stable task identifier; identical repeated submissions return the same ID and changed configurations return HTTP 409 while the task is retained. The key is not a permanent transaction ledger. A simulated Redis-local side effect uses SETNX keyed by stable task ID, then deliberately fails so the retry observes the existing effect. This is safe only within this single Redis atomic-operation boundary; it does not ensure exactly-once external HTTP, payment or email effects. Redis persistence and finite task retention limit durability. A production external operation needs provider-supported idempotency or database transaction-based deduplication. A real worker process kill is still not tested.

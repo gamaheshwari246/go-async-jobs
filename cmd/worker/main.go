@@ -10,6 +10,7 @@ import (
 
  "example.com/go-async-jobs/internal/handlers"
  "github.com/hibiken/asynq"
+ "github.com/redis/go-redis/v9"
 )
 func main(){
  logger:=slog.New(slog.NewJSONHandler(os.Stdout,nil))
@@ -25,7 +26,8 @@ func main(){
  RetryDelayFunc:func(n int,err error,task *asynq.Task)time.Duration{return backoff.Delay(n,rand.Float64())},
  Queues:map[string]int{"critical":6,"default":3,"low":1},StrictPriority:false,
  })
- mux:=asynq.NewServeMux();mux.HandleFunc("demo.sleep",handlers.DemoSleep)
+ redisClient:=redis.NewClient(&redis.Options{Addr:addr});defer redisClient.Close()
+ mux:=asynq.NewServeMux();mux.HandleFunc("demo.sleep",handlers.DemoSleep);mux.HandleFunc("demo.effect",handlers.EffectHandler(redisClient))
  logger.Info("worker starting","concurrency",concurrency,"queues","critical:6 default:3 low:1")
  if err:=srv.Run(mux);err!=nil{logger.Error("worker stopped","error",err);os.Exit(1)}
 }

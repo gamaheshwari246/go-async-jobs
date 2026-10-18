@@ -69,6 +69,7 @@ func TestFullLifecycle(t *testing.T){
  })
  mux:=asynq.NewServeMux()
  mux.HandleFunc("demo.sleep",handlers.DemoSleep)
+ mux.HandleFunc("demo.effect",handlers.EffectHandler(rdb))
  mux.HandleFunc("test.panic",func(context.Context,*asynq.Task)error{panic("simulated handler crash")})
  if err:=srv.Start(mux);err!=nil{t.Fatal(err)}
  defer srv.Shutdown()
@@ -108,6 +109,28 @@ func TestFullLifecycle(t *testing.T){
  code,_=api("POST","/admin/resume","",true)
  if code!=http.StatusOK{t.Fatalf("resume %d",code)}
  poll(submit(0,0,0,5),"succeeded",12*time.Second)
+ })
+ t.Run("duplicate submission",func(t *testing.T){
+  payload:=`{"type":"demo.sleep","payload":{"duration_ms":0},"priority":5}`
+  request:=func(body string)(int,map[string]any){
+   req,err:=http.NewRequest("POST",httpServer.URL+"/jobs",bytes.NewBufferString(body));if err!=nil{t.Fatal(err)}
+   req.Header.Set("Idempotency-Key","client-operation-001")
+   res,err:=http.DefaultClient.Do(req);if err!=nil{t.Fatal(err)}
+   defer res.Body.Close();var got map[string]any;_ = json.NewDecoder(res.Body).Decode(&got);return res.StatusCode,got
+  }
+  a,x:=request(payload);b,y:=request(payload)
+  if a!=202||b!=200||x["job_id"]!=y["job_id"]{t.Fatalf("dedup %d %v / %d %v",a,x,b,y)}
+  c,_:=request(`{"type":"demo.sleep","payload":{"duration_ms":30},"priority":5}`)
+  if c!=409{t.Fatalf("conflict %d",c)}
+ })
+ t.Run("effect committed once after retry",func(t *testing.T){
+  code,res:=api("POST","/jobs",`{"type":"demo.effect","payload":{},"max_retries":1}`,false)
+  if code!=202{t.Fatalf("submit effect %d %v",code,res)}
+  id:=res["job_id"].(string)
+  outcome:=poll(id,"succeeded",15*time.Second)
+  if outcome["attempts"]!=float64(2){t.Fatalf("effect attempts %v",outcome)}
+  key:="go-async-jobs:demo-effects:"+id
+  n,err:=rdb.Exists(ctx,key).Result();if err!=nil||n!=1{t.Fatalf("effect missing %v %v",n,err)}
  })
  t.Run("invalid priority",func(t *testing.T){
  code,_:=api("POST","/jobs",`{"type":"demo.sleep","priority":100,"payload":{}}`,false)

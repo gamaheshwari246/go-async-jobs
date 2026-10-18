@@ -2,6 +2,9 @@ package httpapi
 
 import (
  "crypto/subtle"
+ "crypto/sha256"
+ "encoding/hex"
+ "bytes"
  "encoding/json"
  "errors"
  "log/slog"
@@ -33,6 +36,7 @@ func(s *Server)Routes()http.Handler{
  mux.HandleFunc("GET /admin/drain",s.adminDrainStatus)
  return mux
 }
+func sha256Sum(key string)[]byte{sum:=sha256.Sum256([]byte(key));return sum[:]}
 func(s *Server)submit(w http.ResponseWriter,r *http.Request){
  r.Body=http.MaxBytesReader(w,r.Body,64*1024)
  draining,err:=s.Gate.IsDraining(r.Context())
@@ -41,7 +45,27 @@ func(s *Server)submit(w http.ResponseWriter,r *http.Request){
  req,err:=spec.Decode(r.Body);if err!=nil{http.Error(w,err.Error(),http.StatusBadRequest);return}
  v,err:=spec.Validate(req);if err!=nil{http.Error(w,err.Error(),http.StatusBadRequest);return}
  task:=asynq.NewTask(v.Type,v.Body)
- info,err:=s.Client.EnqueueContext(r.Context(),task,asynq.Queue(v.Queue),asynq.MaxRetry(v.Retries),asynq.Timeout(v.Timeout),asynq.Retention(24*time.Hour))
+ opts:=[]asynq.Option{asynq.Queue(v.Queue),asynq.MaxRetry(v.Retries),asynq.Timeout(v.Timeout),asynq.Retention(24*time.Hour)}
+ key:=r.Header.Get("Idempotency-Key")
+ if key!=""{
+   if len(key)>128{http.Error(w,"idempotency key too long",http.StatusBadRequest);return}
+   for _,ch:=range key{if ch<33||ch>126{http.Error(w,"idempotency key must contain printable non-whitespace ASCII",http.StatusBadRequest);return}}
+   sum:=sha256.Sum256([]byte(key))
+   opts=append(opts,asynq.TaskID("idem-"+hex.EncodeToString(sum[:])))
+ }
+ info,err:=s.Client.EnqueueContext(r.Context(),task,opts...)
+ if key!=""&&errors.Is(err,asynq.ErrTaskIDConflict){
+   id:="idem-"+hex.EncodeToString(sha256Sum(key))
+   for _,q:=range queues{
+     existing,e:=s.Inspector.GetTaskInfo(q,id)
+     if e==nil{
+       if !bytes.Equal(existing.Payload,v.Body){http.Error(w,"idempotency key reused for different job configuration",http.StatusConflict);return}
+       w.Header().Set("Location","/jobs/"+id)
+       writeJSON(w,http.StatusOK,map[string]any{"job_id":id,"status":stateName(existing),"queue":q,"priority":v.Priority,"deduplicated":true});return
+     }
+   }
+   http.Error(w,"duplicate task could not be inspected",http.StatusConflict);return
+ }
  if err!=nil{s.Logger.Error("enqueue failed","error",err);http.Error(w,"queue temporarily unavailable",http.StatusServiceUnavailable);return}
  w.Header().Set("Location","/jobs/"+info.ID)
  writeJSON(w,http.StatusAccepted,map[string]any{"job_id":info.ID,"status":"queued","queue":info.Queue,"priority":v.Priority,"status_url":"/jobs/"+info.ID})
