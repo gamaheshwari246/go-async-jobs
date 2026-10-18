@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"example.com/go-async-jobs/internal/httpapi"
 	"example.com/go-async-jobs/internal/operations"
+	"example.com/go-async-jobs/internal/operations/idempotency"
+	"example.com/go-async-jobs/internal/spec"
 	"example.com/go-async-jobs/internal/registry"
 	"fmt"
 	"github.com/hibiken/asynq"
@@ -17,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -238,6 +241,80 @@ func TestFullLifecycle(t *testing.T) {
 		if first != 202 || second != 409 {
 			t.Fatalf("same idempotency key different queues: %d %v, second %d", first, one, second)
 		}
+	})
+
+	t.Run("recover crash before enqueue", func(t *testing.T) {
+		body := `{"type":"demo.sleep","priority":9,"payload":{"duration_ms":5}}`
+		key := "orphan-recovery-before-enqueue"
+		request, err := spec.Decode(strings.NewReader(body))
+		if err != nil { t.Fatal(err) }
+		validated, err := spec.Validate(request)
+		if err != nil { t.Fatal(err) }
+		// Simulate API death after Redis reservation but before Asynq enqueue.
+		claim, err := idempotency.Reserve(ctx, rdb, key, validated.Body)
+		if err != nil || claim.Decision != idempotency.New {
+			t.Fatalf("expected fresh claim: %+v, %v", claim, err)
+		}
+		post := func() (int, map[string]any) {
+			t.Helper()
+			req, err := http.NewRequest("POST", httpServer.URL+"/jobs", strings.NewReader(body))
+			if err != nil { t.Fatal(err) }
+			req.Header.Set("Idempotency-Key", key)
+			response, err := http.DefaultClient.Do(req)
+			if err != nil { t.Fatal(err) }
+			defer response.Body.Close()
+			var result map[string]any
+			_ = json.NewDecoder(response.Body).Decode(&result)
+			return response.StatusCode, result
+		}
+		if status, _ := post(); status != http.StatusServiceUnavailable {
+			t.Fatalf("live reservation must return retryable 503, got %d", status)
+		}
+		// The short lease, not the 48-hour retention, determines recovery time.
+		time.Sleep(5500 * time.Millisecond)
+		code, result := post()
+		if code != http.StatusAccepted { t.Fatalf("orphan not reclaimed: %d %v", code, result) }
+		id := result["job_id"].(string)
+		poll(id, "succeeded", 12*time.Second)
+		again, replay := post()
+		if again != http.StatusOK || replay["job_id"] != id {
+			t.Fatalf("replay should reuse recovered job: %d %v", again, replay)
+		}
+	})
+
+	t.Run("recover crash after enqueue before confirm", func(t *testing.T) {
+		body := `{"type":"demo.sleep","priority":9,"payload":{"duration_ms":5}}`
+		key := "orphan-recovery-after-enqueue"
+		request, err := spec.Decode(strings.NewReader(body))
+		if err != nil { t.Fatal(err) }
+		validated, err := spec.Validate(request)
+		if err != nil { t.Fatal(err) }
+		claim, err := idempotency.Reserve(ctx, rdb, key, validated.Body)
+		if err != nil || claim.Decision != idempotency.New { t.Fatalf("reserve: %+v %v", claim, err) }
+		expectedID := idempotency.TaskID(key)
+		accepted, err := client.Enqueue(asynq.NewTask(validated.Type, validated.Body),
+			asynq.Queue(validated.Queue), asynq.TaskID(expectedID), asynq.MaxRetry(validated.Retries),
+			asynq.Timeout(validated.Timeout), asynq.Retention(24*time.Hour))
+		if err != nil { t.Fatal(err) }
+		if accepted.ID != expectedID { t.Fatalf("unexpected ID %s", accepted.ID) }
+		// No Confirm: emulate crash. Retry should inspect the actual job and
+		// atomically repair the idempotency registry, without re-enqueueing.
+		req, err := http.NewRequest("POST", httpServer.URL+"/jobs", strings.NewReader(body))
+		if err != nil { t.Fatal(err) }
+		req.Header.Set("Idempotency-Key", key)
+		response, err := http.DefaultClient.Do(req)
+		if err != nil { t.Fatal(err) }
+		defer response.Body.Close()
+		var result map[string]any
+		_ = json.NewDecoder(response.Body).Decode(&result)
+		if response.StatusCode != http.StatusOK || result["job_id"] != expectedID {
+			t.Fatalf("unconfirmed accepted job was not recovered: %d %v", response.StatusCode, result)
+		}
+		checked, err := idempotency.Reserve(ctx, rdb, key, validated.Body)
+		if err != nil || checked.Decision != idempotency.Existing {
+			t.Fatalf("reservation not confirmed after inspection: %+v %v", checked, err)
+		}
+		poll(expectedID, "succeeded", 12*time.Second)
 	})
 	t.Run("invalid priority", func(t *testing.T) {
 		code, _ := api("POST", "/jobs", `{"type":"demo.sleep","priority":100,"payload":{}}`, false)
