@@ -2,12 +2,29 @@
 
 A Go REST API with independently scalable workers using Redis + Asynq, weighted priority classes, exponential retry/backoff, per-attempt timeout, Redis-backed archived dead-letter tasks, status/results and operational drain/resume.
 
-## Quick start
+## Quick start in WSL (one command)
+
+**Prerequisite:** Docker Compose works inside WSL (enable Docker Desktop's WSL integration). No separate Go/Redis installation is needed.
 
 ```bash
-docker compose up --build -d --scale worker=2
-curl http://localhost:8080/healthz
+git clone https://github.com/gamaheshwari246/go-async-jobs.git
+cd go-async-jobs
+bash run.sh
 ```
+
+This builds the Go API and worker Docker images and starts **Redis + API + two workers**. Check http://localhost:8080/healthz.
+
+| Command | Action |
+|---|---|
+| `bash run.sh` | Build and start everything |
+| `bash run.sh build` | Compile Docker images only |
+| `bash run.sh test` | Run formatting, all Go unit/integration tests (including SIGKILL recovery), vet, build |
+| `bash run.sh logs` | Stream API and worker logs |
+| `bash run.sh status` | Show containers |
+| `bash run.sh stop` | Stop containers (keeps Redis volume) |
+
+You may use `./run.sh` instead after `chmod +x run.sh`. **Warning:** integration tests clear Redis DB 13 and 14; use a disposable/local Redis. They do not clear the normal API's DB 0.
+
 
 Submit a job (the server generates the job ID):
 
