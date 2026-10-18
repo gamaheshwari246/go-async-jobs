@@ -89,30 +89,13 @@ func Validate(req SubmitRequest) (Validated, error) {
 	if secs < 1 || secs > 300 {
 		return out, fmt.Errorf("timeout_seconds must be between 1 and 300")
 	}
-	if req.Type != "demo.sleep" && req.Type != "demo.effect" {
-		return out, fmt.Errorf("type must be demo.sleep or demo.effect")
-	}
+	if req.Type == "" { return out, fmt.Errorf("type is required") }
 	trimmed := bytes.TrimSpace(req.Payload)
 	if len(trimmed) < 2 || trimmed[0] != '{' || !json.Valid(trimmed) {
 		return out, fmt.Errorf("payload must be a valid JSON object")
 	}
 	if len(trimmed) > MaxPayloadBytes {
 		return out, fmt.Errorf("payload exceeds %d bytes", MaxPayloadBytes)
-	}
-	var demo struct {
-		DurationMS int `json:"duration_ms"`
-		FailFirst  int `json:"fail_first"`
-	}
-	dec := json.NewDecoder(bytes.NewReader(trimmed))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&demo); err != nil {
-		return out, fmt.Errorf("invalid demo payload: %w", err)
-	}
-	if demo.DurationMS < 0 || demo.DurationMS > 300000 {
-		return out, fmt.Errorf("duration_ms must be 0..300000")
-	}
-	if demo.FailFirst < 0 || demo.FailFirst > 10 {
-		return out, fmt.Errorf("fail_first must be 0..10")
 	}
 	fingerprintData, _ := json.Marshal(struct {
 		Type           string

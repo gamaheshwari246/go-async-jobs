@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"example.com/go-async-jobs/internal/operations"
+ "example.com/go-async-jobs/internal/registry"
 	"example.com/go-async-jobs/internal/spec"
 
 	"github.com/hibiken/asynq"
@@ -100,6 +101,10 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := registry.Validate(registry.Definitions(nil), req.Type, req.Payload); err != nil {
+   http.Error(w,err.Error(),http.StatusBadRequest)
+   return
+  }
 	task := asynq.NewTask(job.Type, job.Body)
 	opts := []asynq.Option{
 		asynq.Queue(job.Queue),

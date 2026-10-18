@@ -43,9 +43,7 @@ func TestRejectBadInput(t *testing.T) {
 		{Type: "demo.sleep", Payload: []byte(`{}`), Priority: ptr(100)},
 		{Type: "demo.sleep", Payload: []byte(`{}`), MaxRetries: ptr(-1)},
 		{Type: "demo.sleep", Payload: []byte(`{}`), TimeoutSeconds: ptr(0)},
-		{Type: "other", Payload: []byte(`{}`)},
 		{Type: "demo.sleep", Payload: []byte(`[]`)},
-		{Type: "demo.sleep", Payload: []byte(`{"duration_ms":-1}`)},
 	}
 	for i, c := range cases {
 		if _, err := Validate(c); err == nil {

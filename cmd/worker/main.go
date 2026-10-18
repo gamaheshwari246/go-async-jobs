@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"example.com/go-async-jobs/internal/backoff"
-	"example.com/go-async-jobs/internal/handlers"
 	"example.com/go-async-jobs/internal/observability"
+ "example.com/go-async-jobs/internal/registry"
 
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
@@ -42,6 +42,7 @@ func main() {
 			"low":      1,
 		},
 		StrictPriority: false,
+  ShutdownTimeout: 330*time.Second,
 		RetryDelayFunc: func(retry int, err error, task *asynq.Task) time.Duration {
 			delay := backoff.Delay(retry, rand.Float64())
 			logger.Warn("job_retry_scheduled",
@@ -58,8 +59,7 @@ func main() {
 	defer redisClient.Close()
 
 	mux := asynq.NewServeMux()
-	mux.HandleFunc("demo.sleep", handlers.DemoSleep)
-	mux.HandleFunc("demo.effect", handlers.EffectHandler(redisClient))
+	registry.Register(mux, registry.Definitions(redisClient))
 	mux.Use(observability.TaskMiddleware(logger))
 
 	logger.Info("worker_starting", "redis_addr", addr, "concurrency", concurrency,
