@@ -15,7 +15,7 @@ Job 123 is enqueued
    -> Handler returns success
 ```
 
-The implementation is `internal/handlers/effect.go`: `SETNX("go-async-jobs:demo-effects:"+jobID, payload, 7-day TTL)`. It demonstrates an **atomic, Redis-local effect**, not exactly-once handler execution. The handler intentionally returns a simulated error after its first successful `SETNX` to reproduce the gap between effect and completion; the next attempt observes the key. Tests exercise this *simulated* failure, not an operating-system worker kill.
+The implementation is `internal/handlers/effect.go`: `SETNX("go-async-jobs:demo-effects:"+jobID, payload, 7-day TTL)`. It demonstrates an **atomic, Redis-local effect**, not exactly-once handler execution. The handler intentionally returns a simulated error after its first successful `SETNX` to reproduce the gap between effect and completion; the next attempt observes the key. Tests exercise this simulated failure **and** a separate real OS-worker SIGKILL/restart scenario (in `internal/integration/crash_recovery_test.go`) that verifies recovery and a single Redis-local effect. Neither test proves exactly-once arbitrary external effects.
 
 `max_retries` bounds standard failed attempts, but does not guarantee no repeated execution, especially during process recovery or acknowledgment loss. Stable IDs and attempt logs **detect** repeats. They do not make external calls safe by themselves.
 

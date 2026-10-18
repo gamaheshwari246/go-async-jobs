@@ -70,7 +70,7 @@ go vet ./...
 go build ./cmd/api ./cmd/worker
 ```
 
-GitHub Actions (`.github/workflows/ci.yml`) runs the Redis integration suite with race detection, `go vet`, and builds on each push and pull request. Integration tests cover success/results, transient retry, exhaustion/archive, handler panic, timeout, drain/resume and Redis-local idempotency; an actual operating-system worker-kill test has **not** been added.
+GitHub Actions (`.github/workflows/ci.yml`) runs the Redis integration suite with race detection, `go vet`, and builds on each push and pull request. Integration tests cover success/results, transient retry, exhaustion/archive, handler panic, timeout, drain/resume and Redis-local idempotency; a separate integration test kills a real worker subprocess with SIGKILL after recording a Redis effect, starts a fresh worker, and asserts recovery, completion and one effect (while Redis state survives).
 
 ## What breaks first under load?
 

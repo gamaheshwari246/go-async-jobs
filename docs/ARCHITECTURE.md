@@ -39,7 +39,7 @@ flowchart TD
 
 - **Ordinary handler error:** a failed attempt can be rescheduled after exponential backoff; `max_retries=N` allows the initial attempt plus up to N standard retries (e.g. N=2 gives up to three ordinary attempts).
 - **Timeout:** Asynq cancels the handler context. The handler must respect cancellation; cancellation cannot undo an already completed external effect.
-- **Worker process crash:** if a worker completes an effect but dies before Asynq records success, recovery may execute the same job again. Recovery timing depends on Asynq's unfinished-task mechanisms. We have **not** run a real process-kill recovery integration test.
+- **Worker process crash:** if a worker completes an effect but dies before Asynq records success, recovery may execute the same job again. Recovery timing depends on Asynq's unfinished-task mechanisms. A Redis-backed integration test now kills a real worker subprocess with SIGKILL after a Redis effect is stored, before completion ACK; a restarted worker recovers the job and verifies no second Redis effect is committed. This establishes this crash-recovery scenario, not all possible crash timings.
 - **Redis outage during enqueue:** the API returns an error rather than promising acceptance. An uncertain network response can still leave the client unsure whether Redis accepted a request.
 - **Redis process/host loss:** Compose enables Redis AOF with `appendfsync everysec`, which can lose recently acknowledged data on a hard crash and therefore is **not an unconditional durability guarantee**.
 - **Retry limits:** N limits ordinary failure retries, but does **not** prove an absolute lifetime bound on all process-crash recoveries, duplicate external effects or retries by the HTTP client.
@@ -64,7 +64,7 @@ This is a **Redis-local demonstration only**, not an exactly-once external payme
 | Handler panic | Failure recorded / archived | Redis integration |
 | Duplicate Redis-local effect after retry | Second attempt observes same Redis key | Redis integration |
 | Repeated HTTP submission with key | Same task ID when retained, conflict on changed payload | Redis integration |
-| Worker process killed between effect and ACK | Asynq recovery expected, possible duplicate attempt | **Not process-kill tested** |
+| Worker process killed between effect and ACK | A fresh Asynq server recovers and finishes the job; SETNX prevents a duplicate Redis-local effect | **SIGKILL integration tested** |
 | Redis host loses recent AOF writes | Potential accepted-job loss | **Not fault-injection tested** |
 | Two concurrent conflicting submissions on different priority queues | Race / uniqueness limitation | **Not guaranteed** |
 
@@ -74,4 +74,4 @@ Sustained arrivals faster than completions increase Redis waiting tasks, retaine
 
 ## Known limitations
 
-No permanent audit log, no process-kill CI test, no strict atomic drain fence, no durable external-side-effect transaction, no unconditional Redis data durability, no strict 0–9 priority ordering, no permanent job status beyond retention, and no truly global request-idempotency registry.
+No permanent audit log, no exhaustive failure-injection matrix, no strict atomic drain fence, no durable external-side-effect transaction, no unconditional Redis data durability, no strict 0–9 priority ordering, no permanent job status beyond retention, and no truly global request-idempotency registry.
