@@ -92,6 +92,10 @@ func TestFullLifecycle(t *testing.T) {
 		return nil
 	}
 	id := submit(75, 0, 0, 5)
+	readyCode, readyBody := api("GET", "/readyz", "", false)
+	if readyCode != http.StatusOK || readyBody["status"] != "ready" {
+		t.Fatalf("API should be ready when Redis is healthy: %d %v", readyCode, readyBody)
+	}
 	code, depth := api("GET", "/queue/depth", "", false)
 	if code != 200 || depth["waiting"].(float64) < 1 {
 		t.Fatalf("queued depth: %d %v", code, depth)

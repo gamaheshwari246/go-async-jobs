@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -40,6 +41,16 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "up"})
+	})
+	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+		defer cancel()
+		if err := s.Gate.Redis.Ping(ctx).Err(); err != nil {
+			s.logger().WarnContext(r.Context(), "api_readiness_failed", "error", err)
+			http.Error(w, "Redis unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 	})
 	mux.HandleFunc("POST /jobs", s.submit)
 	mux.HandleFunc("GET /jobs/{id}", s.status)
@@ -100,6 +111,8 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The API needs only the validators. Definitions(nil) creates handler closures
+	// but does not execute them; Redis is injected into handlers by the worker.
 	if err := registry.Validate(registry.Definitions(nil), req.Type, req.Payload); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

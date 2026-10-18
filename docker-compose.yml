@@ -18,6 +18,12 @@ services:
       ADMIN_TOKEN: "${ADMIN_TOKEN:-local-dev-token}"
     ports:
       - "8080:8080"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
     depends_on:
       redis:
         condition: service_healthy
@@ -28,6 +34,13 @@ services:
     environment:
       REDIS_ADDR: redis:6379
       WORKER_CONCURRENCY: "5"
+      WORKER_HEALTH_ADDR: ":8081"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck", "http://127.0.0.1:8081/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
     depends_on:
       redis:
         condition: service_healthy
@@ -50,6 +63,6 @@ services:
         test -z "$(gofmt -l $(find . -name '*.go' -type f))"
         go test -mod=readonly -race -tags=integration -count=1 ./...
         go vet -mod=readonly ./...
-        go build -mod=readonly ./cmd/api ./cmd/worker
+        go build -mod=readonly ./cmd/api ./cmd/worker ./cmd/healthcheck
 volumes:
   redis_data:

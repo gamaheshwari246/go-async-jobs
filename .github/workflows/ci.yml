@@ -44,6 +44,6 @@ jobs:
       - name: Vet
         run: go vet -mod=readonly ./...
       - name: Build
-        run: go build -mod=readonly ./cmd/api ./cmd/worker
+        run: go build -mod=readonly ./cmd/api ./cmd/worker ./cmd/healthcheck
       - name: Docker image smoke build
         run: docker build -t go-async-jobs:ci .

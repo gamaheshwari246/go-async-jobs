@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log/slog"
+	"net"
+	"net/http"
 	"math/rand"
 	"os"
 	"strconv"
 	"time"
 
 	"example.com/go-async-jobs/internal/backoff"
+	"example.com/go-async-jobs/internal/health"
 	"example.com/go-async-jobs/internal/observability"
 	"example.com/go-async-jobs/internal/registry"
 
@@ -34,7 +39,51 @@ func main() {
 		concurrency = number
 	}
 
-	server := asynq.NewServer(asynq.RedisClientOpt{Addr: addr}, asynq.Config{
+	readiness := &health.WorkerReadiness{}
+	server := asynq.NewServer(asynq.RedisClientOpt{Addr: addr}, workerConfig(concurrency, logger, readiness.Observe))
+
+	listen, err := net.Listen("tcp", workerHealthAddress())
+	if err != nil {
+		logger.Error("worker_health_bind_failed", "error", err)
+		os.Exit(1)
+	}
+	healthServer := &http.Server{Handler: readiness.Routes(), ReadHeaderTimeout: 3 * time.Second}
+	go func() {
+		if err := healthServer.Serve(listen); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Error("worker_health_server_stopped", "error", err)
+		}
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = healthServer.Shutdown(ctx)
+	}()
+
+	redisClient := redis.NewClient(&redis.Options{Addr: addr})
+	defer redisClient.Close()
+
+	mux := asynq.NewServeMux()
+	registry.Register(mux, registry.Definitions(redisClient))
+	mux.Use(observability.TaskMiddleware(logger))
+
+	logger.Info("worker_starting", "redis_addr", addr, "concurrency", concurrency,
+		"queue_weights", "critical:6 default:3 low:1", "health_addr", listen.Addr().String())
+	if err := server.Run(mux); err != nil {
+		logger.Error("worker_stopped", "error", err)
+		os.Exit(1)
+	}
+	logger.Info("worker_shutdown")
+}
+
+func workerHealthAddress() string {
+	if value := os.Getenv("WORKER_HEALTH_ADDR"); value != "" {
+		return value
+	}
+	return ":8081"
+}
+
+func workerConfig(concurrency int, logger *slog.Logger, healthCheck func(error)) asynq.Config {
+	return asynq.Config{
 		Concurrency: concurrency,
 		Queues: map[string]int{
 			"critical": 6,
@@ -42,6 +91,9 @@ func main() {
 			"low":      1,
 		},
 		StrictPriority:  false,
+		DelayedTaskCheckInterval: time.Second,
+		HealthCheckInterval: 5 * time.Second,
+		HealthCheckFunc: healthCheck,
 		ShutdownTimeout: 330 * time.Second,
 		RetryDelayFunc: func(retry int, err error, task *asynq.Task) time.Duration {
 			delay := backoff.Delay(retry, rand.Float64())
@@ -53,20 +105,4 @@ func main() {
 			)
 			return delay
 		},
-	})
-
-	redisClient := redis.NewClient(&redis.Options{Addr: addr})
-	defer redisClient.Close()
-
-	mux := asynq.NewServeMux()
-	registry.Register(mux, registry.Definitions(redisClient))
-	mux.Use(observability.TaskMiddleware(logger))
-
-	logger.Info("worker_starting", "redis_addr", addr, "concurrency", concurrency,
-		"queue_weights", "critical:6 default:3 low:1")
-	if err := server.Run(mux); err != nil {
-		logger.Error("worker_stopped", "error", err)
-		os.Exit(1)
 	}
-	logger.Info("worker_shutdown")
-}
