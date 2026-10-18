@@ -20,6 +20,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+      - name: Check WSL launcher and Docker Compose configuration
+        run: |
+          bash -n run.sh
+          docker compose --profile test config -q
       - name: Resolve dependencies
         run: go mod tidy
       - name: Verify Go formatting
