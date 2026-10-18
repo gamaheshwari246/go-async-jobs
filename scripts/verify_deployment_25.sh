@@ -4,7 +4,7 @@
 # RUN_PRIVILEGED=1 and use SSH, not the unauthenticated public API, for admin.
 set -Eeuo pipefail
 
-BASE_URL="${BASE_URL:-http://146.190.95.143:8080}"
+BASE_URL="${BASE_URL:-http://127.0.0.1:8082}"
 BASE_URL="${BASE_URL%/}"
 POLL_SECONDS="${POLL_SECONDS:-40}"
 SSH_HOST="${SSH_HOST:-}"

@@ -12,7 +12,7 @@ usage() {
   cat <<'EOF'
 Usage: bash run.sh [command]
 
-  start    Build and start API, two workers, and Redis (default)
+  start    Build and start API, scheduler, two workers, and Redis (default)
   build    Compile Docker images without starting the services
   test     Run gofmt check, unit/integration tests, vet, and build in Docker
   logs     Follow API and worker logs
@@ -20,15 +20,15 @@ Usage: bash run.sh [command]
   stop     Stop services (preserves Redis data)
   help     Show this help
 
-No local Go installation is required. Docker Compose must work in WSL.
+No local Go installation is required. Docker Compose must work in Ubuntu/WSL. V2 uses project go-async-jobs-v2 and host API port 8082.
 EOF
 }
 
 case "${1:-start}" in
   start)
-    docker compose up --build -d --scale worker=2
+    docker compose --profile scheduler up --build -d --scale worker=2
     echo
-    echo "API: http://localhost:8080/healthz"
+    echo "V2 API: http://localhost:8082/healthz"
     echo "Logs: bash run.sh logs"
     ;;
   build)
