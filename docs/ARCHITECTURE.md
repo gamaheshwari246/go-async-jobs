@@ -98,3 +98,9 @@ flowchart TD
 ```
 
 This fixes the former 48-hour temporary orphan-reservation blocking behavior for a retrying client, **without** introducing RabbitMQ. The short claim lease allows recovery after an API crash before enqueue, and inspector-based reconciliation handles an enqueue that succeeded before confirmation. This does not remove Redis persistence limitations, finite task retention or the need for a client retry. See [IDEMPOTENCY.md](IDEMPOTENCY.md).
+
+## Health and retry scheduling
+
+The API provides `/healthz` (process alive) and `/readyz` (Redis ping within one second). Each worker has an internal `:8081` HTTP liveness/readiness endpoint; readiness requires a successful Asynq Redis health check within the last 20 seconds. Docker Compose probes both API and workers using a compiled Go healthcheck binary. Readiness means Redis connectivity, **not** proof that tasks are making progress. Worker `DelayedTaskCheckInterval` is configured to one second; actual retry execution can be later because the queues and workers may be busy. A unit test asserts the production configuration.
+
+Redis is configured with `maxmemory 256mb` and `noeviction`. Under exhaustion, task completion, retries and archival writes can also fail: do not confuse this with a safe global admission cap. Maintain operational headroom and alert on memory/Redis write errors before reaching the limit. CPU, AOF latency, and backlog age still require monitoring; external alerting is not yet deployed.

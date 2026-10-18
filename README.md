@@ -23,7 +23,7 @@ This builds the Go API and worker Docker images and starts **Redis + API + two w
 | `bash run.sh status` | Show containers |
 | `bash run.sh stop` | Stop containers (keeps Redis volume) |
 
-You may use `./run.sh` instead after `chmod +x run.sh`. **Warning:** integration tests clear Redis DB 13 and 14; use a disposable/local Redis. They do not clear the normal API's DB 0.
+You may use `./run.sh` instead after `chmod +x run.sh`. **Warning:** integration tests clear disposable Redis DB 12, 13 and 14; use a disposable/local Redis. They do not clear the normal API's DB 0.
 
 
 Submit a job (the server generates the job ID):
@@ -46,9 +46,9 @@ curl -X POST http://localhost:8080/admin/resume -H 'Authorization: Bearer local-
 
 ## Worker and job configuration
 
-`REDIS_ADDR` (default `127.0.0.1:6379`), `WORKER_CONCURRENCY` (default 5; range 1–100), `HTTP_ADDR` (default `:8080`) and `ADMIN_TOKEN` (required for admin API) configure the two processes. Docker Compose sets a development-only admin token; replace it outside local development. Scale workers using `docker compose up -d --scale worker=4`.
+`REDIS_ADDR` (default `127.0.0.1:6379`), `WORKER_CONCURRENCY` (default 5; range 1–100), `HTTP_ADDR` (default `:8080`), `WORKER_HEALTH_ADDR` (default `:8081`, internal to each worker container) and `ADMIN_TOKEN` (required for admin API) configure the two processes. Docker Compose sets a development-only admin token; replace it outside local development. Scale workers using `docker compose up -d --scale worker=4`.
 
-Priority is 0–9, default 5. 0–3 maps to `low` (weight 1), 4–6 to `default` (weight 3), 7–9 to `critical` (weight 6); numeric priorities are **not strictly ordered**. `max_retries` is 0–10 (default 3). `timeout_seconds` is 1–300 (default 30). Payload limit is 16 KiB. The demonstrated handler types are `demo.sleep` and `demo.effect`.
+Priority is 0–9, default 5. 0–3 maps to `low` (weight 1), 4–6 to `default` (weight 3), 7–9 to `critical` (weight 6); numeric priorities are **not strictly ordered**. Asynq scans scheduled/retry tasks every **1 second** (rather than its 5-second default); execution remains best-effort and depends on worker capacity. `max_retries` is 0–10 (default 3). `timeout_seconds` is 1–300 (default 30). Payload limit is 16 KiB. The demonstrated handler types are `demo.sleep` and `demo.effect`.
 
 ## Full lifecycle
 
@@ -80,7 +80,7 @@ An optional HTTP `Idempotency-Key` header reduces duplicate **submission** when 
 ```bash
 go mod tidy
 go test -race ./...
-# Use a disposable Redis instance: integration tests flush DB 14.
+# Use a disposable Redis instance: integration tests flush DB 12, 13 and 14.
 docker run -d --name redis-test -p 6380:6379 redis:7.4-alpine
 REDIS_TEST_ADDR=127.0.0.1:6380 go test -race -tags=integration -count=1 ./...
 go vet ./...
@@ -89,6 +89,12 @@ go build ./cmd/api ./cmd/worker
 
 GitHub Actions (`.github/workflows/ci.yml`) runs the Redis integration suite with race detection, `go vet`, and builds on each push and pull request. Integration tests cover success/results, transient retry, exhaustion/archive, handler panic, timeout, drain/resume and Redis-local idempotency; a separate integration test kills a real worker subprocess with SIGKILL after recording a Redis effect, starts a fresh worker, and asserts recovery, completion and one effect (while Redis state survives).
 
+
+## Health and readiness
+
+- API `GET /healthz` is a **liveness** check (HTTP process running); `GET /readyz` is a **readiness** check that pings Redis with a 1-second timeout, returning 503 when unavailable.
+- Every worker exposes **internal-only** HTTP health on `WORKER_HEALTH_ADDR=:8081`: `/healthz` reports process liveness, while `/readyz` reports a recent successful Asynq Redis health check. Worker readiness becomes healthy after the first successful check and is considered stale after 20 seconds. This checks broker connectivity, not job throughput or handler correctness.
+- The minimal runtime Docker image includes a tiny compiled Go HTTP probe (no shell/curl dependency), and Docker Compose checks API and worker readiness. `bash run.sh status` shows health states.
 
 ## Structured logs
 
@@ -105,7 +111,7 @@ Inspect logs with:
 docker compose logs -f api worker
 ```
 
-The Go source is formatted with `gofmt`. CI checks formatting before running the race-enabled full suite.
+Go tests also cover idempotency reservation transitions and concurrent leases against **disposable Redis DB 12**, plus worker readiness and the production retry polling interval. The Go source is formatted with `gofmt`. CI checks formatting before running the race-enabled full suite.
 
 ## Operational limits and future migration
 
@@ -116,6 +122,10 @@ For a higher-scale deployment **we would evaluate RabbitMQ plus PostgreSQL**, wi
 The optional HTTP idempotency registry is queue-independent and rejects the same key reused with a different job configuration. A Redis reservation is **not atomic with Asynq enqueue**, but a **five-second claim lease** makes an abandoned reservation recoverable when the client retries: before enqueue, the next retry reclaims the expired lease; after enqueue but before confirmation, the retry inspects Asynq and returns the original job ID. While a claim is live and its task is not yet visible, the API returns retryable **503** with `Retry-After: 1`. Same-key conflicting requests return **409**, and committed records whose task has expired return **410**. Reservations expire after 48 hours; this is not a durable permanent request ledger and no background recovery publisher is installed.
 
 ## What breaks first under load?
+
+**Redis memory headroom is essential.** `maxmemory 256mb` with `noeviction` protects stored tasks from arbitrary eviction, but when Redis reaches its cap it can reject **completion, retry, and archive state writes**, not just new enqueues. The API cannot assume that a full broker still processes previously accepted work normally. For the demo, monitor `used_memory`, `maxmemory`, `mem_fragmentation_ratio`, persistence errors, command failures, queued age, and alert **well before the cap** (for example at 70%/85% of configured memory). These are recommended alert thresholds, not implemented Prometheus alerts. Size Redis and memory headroom from measured load. The 256 MiB cap is a local demonstration default, not a production sizing recommendation.
+
+
 
 Sustained throughput above worker capacity grows Redis waiting queues, archived records and completed-result memory. Bounded worker concurrency does **not** bound queue depth. Repeated retries increase pressure; Redis persistence can become an availability/durability bottleneck. Monitor queue age/depth, throughput, worker utilization, retry/dead-letter rates and Redis memory. Hard backlog admission, stronger durability and longer-lived result storage are production hardening options; they are not present in this interview-scale implementation.
 

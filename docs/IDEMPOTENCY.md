@@ -79,3 +79,7 @@ Tests exercise both simulated crash windows and cross-priority conflict in `inte
 ### Remaining boundaries
 
 This is crash **reconciliation**, not a transaction spanning Redis reservation and Asynq's enqueue. It assumes Redis remains available and retains the task/claim. An API crash still requires the **client to retry**; no separate background sweeper publishes abandoned jobs. Expired records or Redis data loss can permit later re-submission. Arbitrary external payments/emails still require downstream business idempotency, and an interrupted client without an idempotency key remains ambiguous.
+
+## Decision tests
+
+The `internal/operations/idempotency/idempotency_integration_test.go` suite exercises the Redis Lua reservation against real Redis DB 12. It covers fresh reservations, live claim conflicts, mismatched payloads, confirmed tasks, observed-task repair, reclaiming expired leases, upgrading legacy string records, stale-owner confirmation rejection, and parallel contenders. The unit suite also checks Redis-unavailable errors. These test local atomic reservation transitions, **not** exactly-once delivery across arbitrary external systems.

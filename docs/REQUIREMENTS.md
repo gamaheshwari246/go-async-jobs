@@ -33,3 +33,7 @@ Payload types are registered centrally with dedicated validators and worker hand
 ## Submission reservation recovery
 
 Optional HTTP idempotency now uses an atomic Redis fingerprint reservation with a five-second claim lease. A client retry recovers an orphaned pre-enqueue claim after lease expiry. If enqueue succeeded but confirmation was interrupted, Asynq inspection repairs the reservation. Integration tests cover both crash windows and cross-priority rejection. No new broker or database is required; this does not provide unconditional exactly-once semantics or automatic recovery without client retries.
+
+## Reliability polish
+
+Production workers poll delayed/retry tasks every **one second** instead of Asynq's five-second default. The API has a Redis-backed readiness endpoint and each worker publishes internal health/readiness based on recent Asynq Redis checks, with Docker Compose healthchecks. A small standalone Go health probe is built into the runtime image. Real-Redis integration tests in `internal/operations/idempotency` exercise reservation decision outcomes, concurrent claims, lease expiry and stale-owner protection using disposable Redis DB 12. Redis `noeviction` exhaustion may block **task state transitions as well as enqueues**, so early memory warnings are recommended but not implemented as an alerting service. Cancellation remains intentionally out of scope: authenticated drain satisfies the exercise's drain-or-cancel requirement.
