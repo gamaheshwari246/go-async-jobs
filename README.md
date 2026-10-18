@@ -1,3 +1,9 @@
+# go-async-jobs V2: scheduling and metrics
+
+**This `v2` branch is an isolated upgrade; the original `main` deployment is unchanged.** Read [V2 setup, scheduling, cron and metrics guide](V2.md) first. V2 binds the API only to `127.0.0.1:8082` and uses a separate Compose project and Redis volume.
+
+---
+
 # Go Asynchronous Jobs API
 
 A Go REST API with independently scalable workers using Redis + Asynq, weighted priority classes, exponential retry/backoff, per-attempt timeout, Redis-backed archived dead-letter tasks, status/results and operational drain/resume.
