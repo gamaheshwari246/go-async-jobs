@@ -46,7 +46,7 @@ func (c *Collector) RecordAttempt(queue string, elapsed time.Duration, success b
 	p := c.Redis.Pipeline()
 	p.HIncrBy(ctx, outcomeKey(queue), outcome, 1)
 	p.HIncrBy(ctx, durationKey(queue), "count", 1)
-	p.HIncrBy(ctx, durationKey(queue), "sum_us", elapsed.Microseconds(), 1)
+	p.HIncrBy(ctx, durationKey(queue), "sum_us", elapsed.Microseconds())
 	for i, bound := range bounds {
 		if elapsed.Seconds() <= bound { p.HIncrBy(ctx, durationKey(queue), fmt.Sprintf("bucket_%d",i), 1) }
 	}

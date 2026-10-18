@@ -83,7 +83,7 @@ func TestV2SchedulingAndMetrics(t *testing.T) {
 	if response.StatusCode!=200 {t.Fatalf("metrics with auth: %d",response.StatusCode)}
 	contents,err:=io.ReadAll(response.Body)
 	if err!=nil {t.Fatal(err)}
-	for _,want:=range []string{"go_jobs_queue_waiting{queue="critical"}","go_jobs_attempt_duration_seconds_bucket{queue="critical",le="0.1"}","go_jobs_worker_capacity 2","go_jobs_worker_utilization","go_jobs_dead_lettered_total"} {
+	for _,want:=range []string{"go_jobs_queue_waiting{queue=\"critical\"}","go_jobs_attempt_duration_seconds_bucket{queue=\"critical\",le=\"0.1\"}","go_jobs_worker_capacity 2","go_jobs_worker_utilization","go_jobs_dead_lettered_total"} {
 		if !strings.Contains(string(contents),want) {t.Errorf("metrics missing %s",want)}
 	}
 }
