@@ -107,6 +107,14 @@ docker compose logs -f api worker
 
 The Go source is formatted with `gofmt`. CI checks formatting before running the race-enabled full suite.
 
+## Operational limits and future migration
+
+The running service remains **Redis + Asynq**. Redis is configured with a 256 MiB `maxmemory` ceiling and `noeviction`: it rejects new writes under memory pressure instead of silently deleting queued jobs. This is **not** a queue admission quota; processing may also be affected by exhausted Redis memory. Tune memory for actual workloads. Workers have a 330-second Asynq shutdown timeout and a 350-second Compose stop grace period for handlers configured up to 300 seconds. Forced process kills and unsafe external side effects can still cause redelivery. Archived/dead-letter tasks are not permanent records; Asynq can prune archived data.
+
+For a higher-scale deployment **we would evaluate RabbitMQ plus PostgreSQL**, with RabbitMQ consuming work and PostgreSQL serving as the durable job/status/result source of truth. A transactional outbox and publisher would bridge the database-to-broker crash window, and a consumer inbox/idempotent transaction would protect business effects. This is a *proposed architecture*, not an implemented migration, and not an unconditional replacement for Asynq. See [future production architecture](docs/FUTURE_PRODUCTION.md) and [queue options](docs/QUEUE_OPTIONS.md).
+
+The optional HTTP idempotency registry is queue-independent and rejects the same key reused with a different job configuration. A Redis reservation is **not atomic with Asynq enqueue**: crashes can leave temporary orphan reservations until their 48-hour TTL expires. It is not a durable permanent request ledger.
+
 ## What breaks first under load?
 
 Sustained throughput above worker capacity grows Redis waiting queues, archived records and completed-result memory. Bounded worker concurrency does **not** bound queue depth. Repeated retries increase pressure; Redis persistence can become an availability/durability bottleneck. Monitor queue age/depth, throughput, worker utilization, retry/dead-letter rates and Redis memory. Hard backlog admission, stronger durability and longer-lived result storage are production hardening options; they are not present in this interview-scale implementation.

@@ -25,3 +25,7 @@
 No permanent DLQ export, exhaustive failure-injection coverage, external-side-effect exactly-once guarantees, strict atomic admission/drain, hard backlog cap, or durability against every Redis/host failure. See the limitations and failure matrix in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 The GitHub Actions suite previously passed all unit and Redis integration tests as well as `go vet` and Go builds. Documentation-only changes should not alter runtime behavior.
+
+## Hardening update
+
+Payload types are registered centrally with dedicated validators and worker handlers in `internal/registry`. Redis queue-independent reservation and a cross-priority key test were added. Redis memory is bounded with `noeviction`, workers drain gracefully on ordinary stops, and the build pins dependency sums. A separate [future production architecture](FUTURE_PRODUCTION.md) sketches RabbitMQ + PostgreSQL without claiming it has been implemented.

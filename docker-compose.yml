@@ -1,7 +1,7 @@
 services:
   redis:
     image: redis:7.4-alpine
-    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
     volumes:
       - redis_data:/data
     healthcheck:
@@ -22,6 +22,7 @@ services:
       redis:
         condition: service_healthy
   worker:
+    stop_grace_period: 350s
     build: .
     command: ["worker"]
     environment:

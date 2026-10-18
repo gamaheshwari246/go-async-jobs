@@ -75,3 +75,7 @@ Sustained arrivals faster than completions increase Redis waiting tasks, retaine
 ## Known limitations
 
 No permanent audit log, no exhaustive failure-injection matrix, no strict atomic drain fence, no durable external-side-effect transaction, no unconditional Redis data durability, no strict 0–9 priority ordering, no permanent job status beyond retention, and no truly global request-idempotency registry.
+
+## Operational improvements and remaining gaps
+
+Worker shutdown now allows up to 330 seconds before Asynq cancels inflight jobs; Compose gives workers 350 seconds for graceful stop. Redis uses 256mb `maxmemory` with `noeviction`, which avoids silent queue-item eviction but causes write failures at capacity. The optional HTTP idempotency key uses a queue-independent Redis reservation with a 48-hour expiry; reservation and enqueue are not one transaction, so an interrupted request may produce a temporary orphan reservation. See [FUTURE_PRODUCTION.md](FUTURE_PRODUCTION.md) for the prospective RabbitMQ/PostgreSQL design.

@@ -16,3 +16,7 @@ The scheduler uses weighted queues. It **does not** enforce strict per-number pr
 
 ## Bounded buffering
 WORKER_CONCURRENCY caps concurrent handler executions; it does **not** cap the Redis backlog. An enforceable backlog limit must atomically reserve capacity as part of admission; checking queue depth and enqueueing separately races. Add a limit if throughput/load goals demand it. Rate limits, payload caps, bounded retries and admission rejection are complementary.
+
+## Future-production recommendation (conditional)
+
+Redis + Asynq remains appropriate for the submitted implementation. If durable job history, higher operational scale, or multiple consumer services are required, evaluate **RabbitMQ + PostgreSQL** with transactional outbox publication and idempotent consumer state. For AWS-managed deployments, SQS + DLQ and a durable state store can reduce broker operations. For atomic job creation and business database writes, a Postgres-backed `FOR UPDATE SKIP LOCKED` queue can avoid a second broker at the cost of custom retry/lease handling. For event logs and analytics fan-out, evaluate Kafka; Temporal is a better fit for durable, multi-step workflows. None of these automatically provides exactly-once external effects. See [FUTURE_PRODUCTION.md](FUTURE_PRODUCTION.md).

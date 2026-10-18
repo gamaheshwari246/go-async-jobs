@@ -41,3 +41,7 @@ The header is **not** used by Asynq when it retries a worker job; worker attempt
 | Deduplicate client HTTP retries | Optional `Idempotency-Key` header | Deterministic task ID while retained | Limited scope/retention; not global guarantee |
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the full lifecycle, recovery and failure matrix.
+
+## Queue-independent reservation implementation
+
+A Redis Lua script atomically reserves the SHA-256 hash of the optional HTTP key with a fingerprint of the validated job body across **all** priority queues. A conflicting priority or payload receives HTTP 409 rather than enqueueing again. The reservation lasts 48 hours. This avoids concurrent cross-queue re-use but is not atomic with enqueue: a process crash after reservation and before successful enqueue can leave the key reserved without a job (replays may return HTTP 409 until reservation expiry). A production migration needs a durable request ledger or atomic outbox.
