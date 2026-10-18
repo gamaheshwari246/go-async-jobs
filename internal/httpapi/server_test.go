@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/hibiken/asynq"
 )
 
 func TestRequestLoggerCapturesStatusAndAvoidsBody(t *testing.T) {
@@ -27,5 +29,30 @@ func TestRequestLoggerCapturesStatusAndAvoidsBody(t *testing.T) {
 	}
 	if strings.Contains(logged, "secret-payload") {
 		t.Fatal("HTTP request body must not appear in structured logs")
+	}
+}
+
+func TestStateNamesAndAttemptCounts(t *testing.T) {
+	cases := []struct {
+		state        asynq.TaskState
+		retried      int
+		wantName     string
+		wantAttempts int
+	}{
+		{asynq.TaskStatePending, 0, "queued", 0},
+		{asynq.TaskStateActive, 0, "running", 1},
+		{asynq.TaskStateRetry, 1, "failed", 1},
+		{asynq.TaskStateCompleted, 2, "succeeded", 3},
+		{asynq.TaskStateArchived, 1, "dead_lettered", 2},
+		{asynq.TaskStateScheduled, 0, "queued", 0},
+	}
+	for _, tc := range cases {
+		info := &asynq.TaskInfo{State: tc.state, Retried: tc.retried}
+		if got := stateName(info); got != tc.wantName {
+			t.Errorf("state %v name: got %q want %q", tc.state, got, tc.wantName)
+		}
+		if got := attempts(info); got != tc.wantAttempts {
+			t.Errorf("state %v attempts: got %d want %d", tc.state, got, tc.wantAttempts)
+		}
 	}
 }
