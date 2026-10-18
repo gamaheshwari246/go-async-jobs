@@ -11,7 +11,7 @@ import (
 const maxHealthAge = 20 * time.Second
 
 type WorkerReadiness struct {
-	lastSuccess atomic.Int64
+	lastSuccess  atomic.Int64
 	redisHealthy atomic.Bool
 }
 

@@ -29,14 +29,6 @@ jobs:
         run: |
           go mod tidy
           git diff --exit-code -- go.mod go.sum
-      - name: Format and export changed Go files for commit
-        run: |
-          gofmt -w cmd/worker/main.go cmd/worker/main_test.go internal/health/worker.go internal/health/worker_test.go cmd/healthcheck/main.go internal/httpapi/server.go internal/integration/integration_test.go internal/operations/idempotency/idempotency_integration_test.go internal/httpapi/readiness_test.go
-          for path in cmd/worker/main.go cmd/worker/main_test.go internal/health/worker.go internal/health/worker_test.go cmd/healthcheck/main.go internal/httpapi/server.go internal/integration/integration_test.go internal/operations/idempotency/idempotency_integration_test.go internal/httpapi/readiness_test.go; do
-            printf 'FORMATTED_START:%s:' "$path"
-            base64 -w0 "$path"
-            printf ':FORMATTED_END\\n'
-          done
       - name: Verify Go formatting
         run: |
           unformatted="$(gofmt -l $(find . -name '*.go' -type f))"

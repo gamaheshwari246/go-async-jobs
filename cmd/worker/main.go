@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/rand"
 	"net"
 	"net/http"
-	"math/rand"
 	"os"
 	"strconv"
 	"time"
@@ -90,11 +90,11 @@ func workerConfig(concurrency int, logger *slog.Logger, healthCheck func(error))
 			"default":  3,
 			"low":      1,
 		},
-		StrictPriority:  false,
+		StrictPriority:           false,
 		DelayedTaskCheckInterval: time.Second,
-		HealthCheckInterval: 5 * time.Second,
-		HealthCheckFunc: healthCheck,
-		ShutdownTimeout: 330 * time.Second,
+		HealthCheckInterval:      5 * time.Second,
+		HealthCheckFunc:          healthCheck,
+		ShutdownTimeout:          330 * time.Second,
 		RetryDelayFunc: func(retry int, err error, task *asynq.Task) time.Duration {
 			delay := backoff.Delay(retry, rand.Float64())
 			logger.Warn("job_retry_scheduled",
