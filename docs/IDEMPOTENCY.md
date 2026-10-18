@@ -28,7 +28,7 @@ Two identical `POST /jobs` calls **without** a shared key might be two intention
 - First request: enqueue with an Asynq task ID derived from SHA-256 of the header; return HTTP 202.
 - Replayed matching request while the existing task is available: return the same task ID with HTTP 200.
 - Same key but conflicting request configuration, when the existing task is detected: return HTTP 409.
-- After retention expires, or when task identity is scoped differently across priority queues, this is **not** a permanent globally atomic deduplication guarantee.
+- The queue-independent Redis reservation rejects cross-priority-key reuse while it remains valid; it expires after 48 hours and is not a permanent business transaction ledger.
 
 The header is **not** used by Asynq when it retries a worker job; worker attempts already share the Asynq task ID. HTTP request deduplication is an additional convenience feature, not something explicitly requested in the assignment.
 
@@ -44,4 +44,4 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full lifecycle, recovery and fail
 
 ## Queue-independent reservation implementation
 
-A Redis Lua script atomically reserves the SHA-256 hash of the optional HTTP key with a fingerprint of the validated job body across **all** priority queues. A conflicting priority or payload receives HTTP 409 rather than enqueueing again. The reservation lasts 48 hours. This avoids concurrent cross-queue re-use but is not atomic with enqueue: a process crash after reservation and before successful enqueue can leave the key reserved without a job (replays may return HTTP 409 until reservation expiry). A production migration needs a durable request ledger or atomic outbox.
+A Redis Lua script atomically reserves the SHA-256 hash of the optional HTTP key with a fingerprint of the validated job body across **all** priority queues. A conflicting priority or payload receives HTTP 409 rather than enqueueing again. The reservation lasts 48 hours. This avoids concurrent cross-queue re-use but is not atomic with enqueue: a process crash after reservation and before successful enqueue can leave the key reserved without a job (replays may return HTTP 409 (job unavailable) until reservation expiry). A production migration needs a durable request ledger or atomic outbox.

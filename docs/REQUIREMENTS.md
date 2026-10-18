@@ -20,7 +20,7 @@
 
 ## Not mandatory or not guaranteed
 
-**HTTP request idempotency** is optional; the assignment does **not** require callers to send `Idempotency-Key`. Worker retry detection always uses the server-created task ID. The header is implemented as an extension but has retention and cross-queue scope limitations.
+**HTTP request idempotency** is optional; the assignment does **not** require callers to send `Idempotency-Key`. Worker retry detection always uses the server-created task ID. The header is implemented as an extension with a 48-hour queue-independent Redis reservation; enqueue and reservation remain separate operations, and the reservation can temporarily outlive a failed submission.
 
 No permanent DLQ export, exhaustive failure-injection coverage, external-side-effect exactly-once guarantees, strict atomic admission/drain, hard backlog cap, or durability against every Redis/host failure. See the limitations and failure matrix in [ARCHITECTURE.md](ARCHITECTURE.md).
 

@@ -51,7 +51,7 @@ The server-generated Asynq job ID is stable across worker attempts. Log the ID a
 
 This is a **Redis-local demonstration only**, not an exactly-once external payment/email guarantee. For a downstream API, use provider-enforced idempotency with a stable business key; for our own transactional database, atomically commit the deduplication record and business change together. Redis `SETNX` before an unrelated external call can incorrectly suppress an effect if a crash happens between the two.
 
-**Optional HTTP submission deduplication:** `Idempotency-Key` is implemented but not required by the assignment. It deals with client re-submission and is independent of worker retries. Current matching and lifetime are limited by Asynq task retention, and the design does not assert a global cross-queue atomic uniqueness guarantee. Details in [IDEMPOTENCY.md](IDEMPOTENCY.md).
+**Optional HTTP submission deduplication:** `Idempotency-Key` is implemented but not required by the assignment. It deals with client re-submission and is independent of worker retries. A Redis Lua reservation now serializes the same idempotency key across priority queues, but expires after 48 hours and is **not atomic with enqueue**; orphaned reservations can temporarily block replays. Details in [IDEMPOTENCY.md](IDEMPOTENCY.md).
 
 ## Failure scenarios and tests
 
@@ -66,7 +66,7 @@ This is a **Redis-local demonstration only**, not an exactly-once external payme
 | Repeated HTTP submission with key | Same task ID when retained, conflict on changed payload | Redis integration |
 | Worker process killed between effect and ACK | A fresh Asynq server recovers and finishes the job; SETNX prevents a duplicate Redis-local effect | **SIGKILL integration tested** |
 | Redis host loses recent AOF writes | Potential accepted-job loss | **Not fault-injection tested** |
-| Two concurrent conflicting submissions on different priority queues | Race / uniqueness limitation | **Not guaranteed** |
+| Two conflicting submissions on different priority queues | Queue-independent Redis Lua reservation returns conflict | Redis integration tested; reservation/enqueue crash window remains |
 
 ## What breaks first under load?
 
