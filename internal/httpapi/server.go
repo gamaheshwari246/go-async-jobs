@@ -34,8 +34,30 @@ func(s *Server)Routes()http.Handler{
  mux.HandleFunc("POST /admin/drain",s.adminDrain)
  mux.HandleFunc("POST /admin/resume",s.adminResume)
  mux.HandleFunc("GET /admin/drain",s.adminDrainStatus)
- return mux
+ return requestLogger(mux, s.Logger)
 }
+
+func requestLogger(next http.Handler, logger *slog.Logger) http.Handler {
+ if logger == nil { logger = slog.Default() }
+ return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+  started := time.Now()
+  observed := &responseRecorder{ResponseWriter: w, code: http.StatusOK}
+  next.ServeHTTP(observed, r)
+  logger.InfoContext(r.Context(), "http_request_finished",
+   "method", r.Method, "path", r.URL.Path, "status", observed.code,
+   "elapsed_ms", time.Since(started).Milliseconds())
+ })
+}
+
+type responseRecorder struct {
+ http.ResponseWriter
+ code int
+}
+func (w *responseRecorder) WriteHeader(code int) {
+ w.code = code
+ w.ResponseWriter.WriteHeader(code)
+}
+
 func sha256Sum(key string)[]byte{sum:=sha256.Sum256([]byte(key));return sum[:]}
 func(s *Server)submit(w http.ResponseWriter,r *http.Request){
  r.Body=http.MaxBytesReader(w,r.Body,64*1024)
@@ -60,13 +82,15 @@ func(s *Server)submit(w http.ResponseWriter,r *http.Request){
      existing,e:=s.Inspector.GetTaskInfo(q,id)
      if e==nil{
        if !bytes.Equal(existing.Payload,v.Body){http.Error(w,"idempotency key reused for different job configuration",http.StatusConflict);return}
+       s.Logger.InfoContext(r.Context(),"submission_deduplicated","job_id",id,"queue",q)
        w.Header().Set("Location","/jobs/"+id)
        writeJSON(w,http.StatusOK,map[string]any{"job_id":id,"status":stateName(existing),"queue":q,"priority":v.Priority,"deduplicated":true});return
      }
    }
    http.Error(w,"duplicate task could not be inspected",http.StatusConflict);return
  }
- if err!=nil{s.Logger.Error("enqueue failed","error",err);http.Error(w,"queue temporarily unavailable",http.StatusServiceUnavailable);return}
+ if err!=nil{s.Logger.Error("enqueue_failed","queue",v.Queue,"task_type",v.Type,"error",err);http.Error(w,"queue temporarily unavailable",http.StatusServiceUnavailable);return}
+ s.Logger.InfoContext(r.Context(),"job_enqueued","job_id",info.ID,"queue",info.Queue,"task_type",v.Type,"priority",v.Priority,"max_retries",v.Retries,"timeout",v.Timeout.String())
  w.Header().Set("Location","/jobs/"+info.ID)
  writeJSON(w,http.StatusAccepted,map[string]any{"job_id":info.ID,"status":"queued","queue":info.Queue,"priority":v.Priority,"status_url":"/jobs/"+info.ID})
 }
@@ -138,12 +162,14 @@ func(s *Server)adminAuthorized(w http.ResponseWriter,r *http.Request)bool{
 }
 func(s *Server)adminDrain(w http.ResponseWriter,r *http.Request){
  if !s.adminAuthorized(w,r){return}
- if err:=s.Gate.SetDraining(r.Context(),true);err!=nil{http.Error(w,"could not enable drain",http.StatusServiceUnavailable);return}
+ if err:=s.Gate.SetDraining(r.Context(),true);err!=nil{s.Logger.ErrorContext(r.Context(),"drain_failed","error",err);http.Error(w,"could not enable drain",http.StatusServiceUnavailable);return}
+ s.Logger.WarnContext(r.Context(),"admission_draining")
  writeJSON(w,http.StatusAccepted,map[string]any{"draining":true,"message":"new submissions rejected; queued and active work continues"})
 }
 func(s *Server)adminResume(w http.ResponseWriter,r *http.Request){
  if !s.adminAuthorized(w,r){return}
- if err:=s.Gate.SetDraining(r.Context(),false);err!=nil{http.Error(w,"could not resume",http.StatusServiceUnavailable);return}
+ if err:=s.Gate.SetDraining(r.Context(),false);err!=nil{s.Logger.ErrorContext(r.Context(),"resume_failed","error",err);http.Error(w,"could not resume",http.StatusServiceUnavailable);return}
+ s.Logger.InfoContext(r.Context(),"admission_resumed")
  writeJSON(w,http.StatusOK,map[string]any{"draining":false})
 }
 func(s *Server)adminDrainStatus(w http.ResponseWriter,r *http.Request){
