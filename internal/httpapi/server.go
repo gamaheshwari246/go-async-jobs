@@ -29,7 +29,7 @@ type Server struct {
 	Logger     *slog.Logger
 	Gate       operations.Gate
 	AdminToken string
-	Metrics *metrics.Collector
+	Metrics    *metrics.Collector
 }
 
 func (s *Server) logger() *slog.Logger {
@@ -58,9 +58,14 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /jobs/{id}", s.status)
 	mux.HandleFunc("GET /queue/depth", s.depth)
 	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
-		if !s.adminAuthorized(w,r) { return }
-		if s.Metrics == nil { http.Error(w,"metrics unavailable",http.StatusServiceUnavailable); return }
-		s.Metrics.ServeHTTP(w,r)
+		if !s.adminAuthorized(w, r) {
+			return
+		}
+		if s.Metrics == nil {
+			http.Error(w, "metrics unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		s.Metrics.ServeHTTP(w, r)
 	})
 	mux.HandleFunc("POST /admin/drain", s.adminDrain)
 	mux.HandleFunc("POST /admin/resume", s.adminResume)
@@ -131,7 +136,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		asynq.Timeout(job.Timeout),
 		asynq.Retention(24 * time.Hour),
 	}
-	if job.RunAt != nil { opts = append(opts, asynq.ProcessAt(*job.RunAt)) }
+	if job.RunAt != nil {
+		opts = append(opts, asynq.ProcessAt(*job.RunAt))
+	}
 
 	// Client-supplied idempotency protects HTTP re-submissions, not worker retries.
 	// The short Redis lease is recoverable after an API crash before enqueue.
@@ -229,7 +236,10 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	status := "queued"
 	response := map[string]any{"job_id": info.ID, "status": status, "queue": info.Queue,
 		"priority": job.Priority, "status_url": "/jobs/" + info.ID}
-	if job.RunAt != nil { response["status"]="scheduled"; response["run_at"]=job.RunAt }
+	if job.RunAt != nil {
+		response["status"] = "scheduled"
+		response["run_at"] = job.RunAt
+	}
 	writeJSON(w, http.StatusAccepted, response)
 }
 

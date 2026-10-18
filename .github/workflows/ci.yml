@@ -25,15 +25,6 @@ jobs:
         run: |
           bash -n run.sh
           docker compose --profile test --profile scheduler config -q
-      - name: Emit formatted files for v2 review
-        run: |
-          gofmt -w $(find . -name '*.go' -type f)
-          git diff --name-only -- '*.go' | while IFS= read -r path; do
-            echo "GOFMT_FILE_START:$path"
-            base64 -w0 "$path"
-            echo
-            echo "GOFMT_FILE_END:$path"
-          done
       - name: Verify committed dependencies
         run: |
           go mod tidy

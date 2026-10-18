@@ -2,8 +2,8 @@ package spec
 
 import (
 	"strings"
-	"time"
 	"testing"
+	"time"
 )
 
 func ptr(n int) *int { return &n }
@@ -62,17 +62,23 @@ func TestDecodeStrictJSON(t *testing.T) {
 }
 
 func TestDelayedRunAt(t *testing.T) {
-	future := time.Now().Add(3*time.Minute).UTC().Format(time.RFC3339Nano)
+	future := time.Now().Add(3 * time.Minute).UTC().Format(time.RFC3339Nano)
 	valid, err := Validate(SubmitRequest{Type: "demo.sleep", Payload: []byte("{}"), RunAt: &future})
-	if err != nil || valid.RunAt == nil || !valid.RunAt.Equal(timeNowParse(t, future)) { t.Fatalf("valid run_at: %+v, %v", valid, err) }
-	bad := []string{"invalid", "2020-01-01T00:00:00Z", time.Now().Add(31*24*time.Hour).UTC().Format(time.RFC3339Nano)}
+	if err != nil || valid.RunAt == nil || !valid.RunAt.Equal(timeNowParse(t, future)) {
+		t.Fatalf("valid run_at: %+v, %v", valid, err)
+	}
+	bad := []string{"invalid", "2020-01-01T00:00:00Z", time.Now().Add(31 * 24 * time.Hour).UTC().Format(time.RFC3339Nano)}
 	for _, value := range bad {
-		if _, err := Validate(SubmitRequest{Type:"demo.sleep",Payload:[]byte("{}"),RunAt:&value}); err == nil { t.Fatalf("accepted invalid run_at %s", value) }
+		if _, err := Validate(SubmitRequest{Type: "demo.sleep", Payload: []byte("{}"), RunAt: &value}); err == nil {
+			t.Fatalf("accepted invalid run_at %s", value)
+		}
 	}
 }
 func timeNowParse(t *testing.T, s string) time.Time {
 	t.Helper()
-	tm,err:=time.Parse(time.RFC3339Nano,s)
-	if err!=nil {t.Fatal(err)}
+	tm, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return tm
 }

@@ -2,15 +2,15 @@ package main
 
 import (
 	"context"
-	"os/signal"
-	"syscall"
 	"errors"
 	"log/slog"
 	"math/rand"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
+	"syscall"
 	"time"
 
 	"example.com/go-async-jobs/internal/backoff"
@@ -43,7 +43,6 @@ func main() {
 	}
 
 	readiness := &health.WorkerReadiness{}
-	
 
 	listen, err := net.Listen("tcp", workerHealthAddress())
 	if err != nil {

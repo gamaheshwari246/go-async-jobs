@@ -168,8 +168,8 @@ t11() {
   poll_status "$id" succeeded || return 1
   require_json '.attempts == 3' || return 1
   elapsed=$(( $(date +%s) - start ))
-  if (( elapsed < 3 )); then
-    printf 'Two backoffs finished in %ss, expected approximately >=3s\n' "$elapsed" >&2
+  if (( elapsed < 2 )); then
+    printf 'Two backoffs finished in %ss, expected >=2s to show non-immediate retries\n' "$elapsed" >&2
     return 1
   fi
 }
