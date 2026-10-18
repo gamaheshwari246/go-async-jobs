@@ -2,9 +2,7 @@ package httpapi
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -114,8 +112,10 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		asynq.Retention(24 * time.Hour),
 	}
 
-	// Client-supplied idempotency is optional and independent of worker retries.
+	// Client-supplied idempotency protects HTTP re-submissions, not worker retries.
+	// The short Redis lease is recoverable after an API crash before enqueue.
 	key := r.Header.Get("Idempotency-Key")
+	var claim idempotency.Claim
 	var deterministicID string
 	if key != "" {
 		if len(key) > 128 {
@@ -128,30 +128,60 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		sum := sha256.Sum256([]byte(key))
-		deterministicID = "idem-" + hex.EncodeToString(sum[:])
+		deterministicID = idempotency.TaskID(key)
 		opts = append(opts, asynq.TaskID(deterministicID))
-	}
 
-	if key != "" {
-		decision, reserveErr := idempotency.Reserve(r.Context(), s.Gate.Redis, key, job.Body)
-		if reserveErr != nil {
-			s.logger().ErrorContext(r.Context(), "idempotency_reservation_failed", "error", reserveErr)
+		claim, err = idempotency.Reserve(r.Context(), s.Gate.Redis, key, job.Body)
+		if err != nil {
+			s.logger().ErrorContext(r.Context(), "idempotency_reservation_failed", "error", err)
 			http.Error(w, "idempotency registry unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		if decision == idempotency.Conflict {
+		switch claim.Decision {
+		case idempotency.Conflict:
 			http.Error(w, "idempotency key reused for different job configuration", http.StatusConflict)
 			return
-		}
-		if decision == idempotency.Existing {
-			s.handleDuplicateSubmission(w, r, deterministicID, job)
+		case idempotency.Existing, idempotency.InProgress:
+			existing, lookupErr := s.lookupExistingTask(deterministicID, job)
+			if lookupErr != nil {
+				s.logger().ErrorContext(r.Context(), "idempotency_lookup_failed", "error", lookupErr)
+				http.Error(w, "queue temporarily unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			if existing != nil {
+				s.confirmObserved(r, key, job.Body)
+				s.writeDuplicate(w, r, existing, job)
+				return
+			}
+			if claim.Decision == idempotency.Existing {
+				// The task was accepted but is no longer retained in Asynq.
+				// Never silently re-enqueue a possibly completed business operation.
+				http.Error(w, "original job has expired from the result store", http.StatusGone)
+				return
+			}
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "submission in progress; retry with the same idempotency key", http.StatusServiceUnavailable)
 			return
 		}
 	}
+
 	info, err := s.Client.EnqueueContext(r.Context(), task, opts...)
 	if key != "" && errors.Is(err, asynq.ErrTaskIDConflict) {
-		s.handleDuplicateSubmission(w, r, deterministicID, job)
+		// The previous API process may have enqueued successfully, then died
+		// before writing the Redis confirmation record.
+		existing, lookupErr := s.lookupExistingTask(deterministicID, job)
+		if lookupErr != nil {
+			s.logger().ErrorContext(r.Context(), "idempotency_lookup_failed", "error", lookupErr)
+			http.Error(w, "queue temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if existing == nil {
+			w.Header().Set("Retry-After", "1")
+			http.Error(w, "task id is reserved; retry shortly", http.StatusServiceUnavailable)
+			return
+		}
+		s.confirmObserved(r, key, job.Body)
+		s.writeDuplicate(w, r, existing, job)
 		return
 	}
 	if err != nil {
@@ -159,6 +189,15 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			"queue", job.Queue, "task_type", job.Type, "error", err)
 		http.Error(w, "queue temporarily unavailable", http.StatusServiceUnavailable)
 		return
+	}
+	if key != "" {
+		confirmed, confirmErr := idempotency.Confirm(r.Context(), s.Gate.Redis, key, job.Body, claim)
+		if confirmErr != nil || !confirmed {
+			// The job was accepted by Asynq. Retry inspection repairs the
+			// reservation, so confirmation failure must not cause re-enqueue.
+			s.logger().WarnContext(r.Context(), "idempotency_confirmation_deferred",
+				"job_id", info.ID, "error", confirmErr, "lease_owner_confirmed", confirmed)
+		}
 	}
 
 	s.logger().InfoContext(r.Context(), "job_enqueued",
@@ -172,25 +211,43 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleDuplicateSubmission(w http.ResponseWriter, r *http.Request, id string, job spec.Validated) {
+// lookupExistingTask inspects Asynq using the stable task ID. A matching
+// task proves that enqueue happened, even when the API crashed before Confirm.
+func (s *Server) lookupExistingTask(id string, job spec.Validated) (*asynq.TaskInfo, error) {
 	for _, queue := range queues {
-		existing, err := s.Inspector.GetTaskInfo(queue, id)
-		if err != nil {
+		info, err := s.Inspector.GetTaskInfo(queue, id)
+		if errors.Is(err, asynq.ErrQueueNotFound) || errors.Is(err, asynq.ErrTaskNotFound) {
 			continue
 		}
-		if !bytes.Equal(existing.Payload, job.Body) {
-			http.Error(w, "idempotency key reused for different job configuration", http.StatusConflict)
-			return
+		if err != nil {
+			return nil, err
 		}
-		s.logger().InfoContext(r.Context(), "submission_deduplicated", "job_id", id, "queue", queue)
-		w.Header().Set("Location", "/jobs/"+id)
-		writeJSON(w, http.StatusOK, map[string]any{
-			"job_id": id, "status": stateName(existing), "queue": queue,
-			"priority": job.Priority, "deduplicated": true,
-		})
-		return
+		if !bytes.Equal(info.Payload, job.Body) || info.Type != job.Type {
+			return nil, errors.New("idempotency key collided with an existing different task")
+		}
+		return info, nil
 	}
-	http.Error(w, "duplicate task could not be inspected", http.StatusConflict)
+	return nil, nil
+}
+
+func (s *Server) confirmObserved(r *http.Request, key string, body []byte) {
+	ok, err := idempotency.ConfirmObserved(r.Context(), s.Gate.Redis, key, body)
+	if err != nil || !ok {
+		s.logger().WarnContext(r.Context(), "idempotency_repair_deferred",
+			"error", err, "confirmed", ok)
+	} else {
+		s.logger().InfoContext(r.Context(), "idempotency_reservation_repaired")
+	}
+}
+
+func (s *Server) writeDuplicate(w http.ResponseWriter, r *http.Request, existing *asynq.TaskInfo, job spec.Validated) {
+	s.logger().InfoContext(r.Context(), "submission_deduplicated",
+		"job_id", existing.ID, "queue", existing.Queue)
+	w.Header().Set("Location", "/jobs/"+existing.ID)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"job_id": existing.ID, "status": stateName(existing),
+		"queue": existing.Queue, "priority": job.Priority, "deduplicated": true,
+	})
 }
 
 func stateName(info *asynq.TaskInfo) string {
