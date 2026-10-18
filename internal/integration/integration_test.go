@@ -9,8 +9,8 @@ import (
 	"example.com/go-async-jobs/internal/httpapi"
 	"example.com/go-async-jobs/internal/operations"
 	"example.com/go-async-jobs/internal/operations/idempotency"
-	"example.com/go-async-jobs/internal/spec"
 	"example.com/go-async-jobs/internal/registry"
+	"example.com/go-async-jobs/internal/spec"
 	"fmt"
 	"github.com/hibiken/asynq"
 	"github.com/redis/go-redis/v9"
@@ -247,9 +247,13 @@ func TestFullLifecycle(t *testing.T) {
 		body := `{"type":"demo.sleep","priority":9,"payload":{"duration_ms":5}}`
 		key := "orphan-recovery-before-enqueue"
 		request, err := spec.Decode(strings.NewReader(body))
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		validated, err := spec.Validate(request)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		// Simulate API death after Redis reservation but before Asynq enqueue.
 		claim, err := idempotency.Reserve(ctx, rdb, key, validated.Body)
 		if err != nil || claim.Decision != idempotency.New {
@@ -258,10 +262,14 @@ func TestFullLifecycle(t *testing.T) {
 		post := func() (int, map[string]any) {
 			t.Helper()
 			req, err := http.NewRequest("POST", httpServer.URL+"/jobs", strings.NewReader(body))
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			req.Header.Set("Idempotency-Key", key)
 			response, err := http.DefaultClient.Do(req)
-			if err != nil { t.Fatal(err) }
+			if err != nil {
+				t.Fatal(err)
+			}
 			defer response.Body.Close()
 			var result map[string]any
 			_ = json.NewDecoder(response.Body).Decode(&result)
@@ -273,7 +281,9 @@ func TestFullLifecycle(t *testing.T) {
 		// The short lease, not the 48-hour retention, determines recovery time.
 		time.Sleep(5500 * time.Millisecond)
 		code, result := post()
-		if code != http.StatusAccepted { t.Fatalf("orphan not reclaimed: %d %v", code, result) }
+		if code != http.StatusAccepted {
+			t.Fatalf("orphan not reclaimed: %d %v", code, result)
+		}
 		id := result["job_id"].(string)
 		poll(id, "succeeded", 12*time.Second)
 		again, replay := post()
@@ -286,24 +296,38 @@ func TestFullLifecycle(t *testing.T) {
 		body := `{"type":"demo.sleep","priority":9,"payload":{"duration_ms":5}}`
 		key := "orphan-recovery-after-enqueue"
 		request, err := spec.Decode(strings.NewReader(body))
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		validated, err := spec.Validate(request)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		claim, err := idempotency.Reserve(ctx, rdb, key, validated.Body)
-		if err != nil || claim.Decision != idempotency.New { t.Fatalf("reserve: %+v %v", claim, err) }
+		if err != nil || claim.Decision != idempotency.New {
+			t.Fatalf("reserve: %+v %v", claim, err)
+		}
 		expectedID := idempotency.TaskID(key)
 		accepted, err := client.Enqueue(asynq.NewTask(validated.Type, validated.Body),
 			asynq.Queue(validated.Queue), asynq.TaskID(expectedID), asynq.MaxRetry(validated.Retries),
 			asynq.Timeout(validated.Timeout), asynq.Retention(24*time.Hour))
-		if err != nil { t.Fatal(err) }
-		if accepted.ID != expectedID { t.Fatalf("unexpected ID %s", accepted.ID) }
+		if err != nil {
+			t.Fatal(err)
+		}
+		if accepted.ID != expectedID {
+			t.Fatalf("unexpected ID %s", accepted.ID)
+		}
 		// No Confirm: emulate crash. Retry should inspect the actual job and
 		// atomically repair the idempotency registry, without re-enqueueing.
 		req, err := http.NewRequest("POST", httpServer.URL+"/jobs", strings.NewReader(body))
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		req.Header.Set("Idempotency-Key", key)
 		response, err := http.DefaultClient.Do(req)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		defer response.Body.Close()
 		var result map[string]any
 		_ = json.NewDecoder(response.Body).Decode(&result)

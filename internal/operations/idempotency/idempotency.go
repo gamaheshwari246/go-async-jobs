@@ -17,16 +17,16 @@ import (
 type Decision int
 
 const (
-	New Decision = iota // Caller owns a short lease and may enqueue.
-	Existing            // The job was previously confirmed in Asynq.
-	Conflict            // Same key used for a different job configuration.
-	InProgress          // Another caller holds a live enqueue lease.
+	New        Decision = iota // Caller owns a short lease and may enqueue.
+	Existing                   // The job was previously confirmed in Asynq.
+	Conflict                   // Same key used for a different job configuration.
+	InProgress                 // Another caller holds a live enqueue lease.
 )
 
 const (
-	lifetime      = 48 * time.Hour
-	defaultLease  = 5 * time.Second
-	keyPrefix     = "go-async-jobs:submission-idem:"
+	lifetime     = 48 * time.Hour
+	defaultLease = 5 * time.Second
+	keyPrefix    = "go-async-jobs:submission-idem:"
 )
 
 // Claim identifies the owner of an unfinished enqueue. Keep Token private to
